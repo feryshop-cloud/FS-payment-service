@@ -1,0 +1,23 @@
+# Secrets (do not commit)
+.dev.vars
+.dev.vars.*
+
+# Local wrangler artifacts
+.wrangler/
+
+# Node
+node_modules/
+dist/
+
+# Generated
+worker-configuration.d.ts
+
+# Env
+.env
+.env.*
+!.env.example
+!.dev.vars.example
+
+# Logs / cache
+*.log
+.DS_Store
