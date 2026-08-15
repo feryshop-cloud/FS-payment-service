@@ -62,6 +62,14 @@ function toResponse(record: PaymentRecord, origin: string): CreatePaymentRespons
 	};
 }
 
+/**
+ * Creates a new payment intent using the configured active payment provider (mock or pakasir).
+ * Idempotent: Returns existing pending payment if one already exists for the given `order_id`.
+ *
+ * @param req - HTTP Request containing `CreatePaymentRequest` body payload.
+ * @param env - Cloudflare Worker environment bindings.
+ * @returns Response JSON containing payment intent data (`CreatePaymentResponse`).
+ */
 async function createPayment(req: Request, env: WorkerEnv): Promise<Response> {
 	const body = (await req.json().catch(() => null)) as CreatePaymentRequest | null;
 	if (!body || !body.order_id || typeof body.amount !== "number" || body.amount <= 0) {

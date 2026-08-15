@@ -6,6 +6,9 @@ import {
 	updateWebhookQueueItem,
 } from "./storage";
 
+/**
+ * Retrieves the secret key used for signing outgoing webhook requests.
+ */
 export function getWebhookSecret(env: WorkerEnv): string {
 	return (
 		env.PAYMENT_WEBHOOK_SECRET || env.MOCK_PAYMENT_WEBHOOK_SECRET || "dev-sandbox-secret-change-me"
@@ -20,6 +23,13 @@ function toHex(buffer: ArrayBuffer): string {
 	return [...new Uint8Array(buffer)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
+/**
+ * Signs a raw JSON payload string using HMAC SHA-256 with the shared webhook secret.
+ *
+ * @param env - Cloudflare Worker environment bindings.
+ * @param body - Serialized raw request body string.
+ * @returns Promise resolving to hex-encoded signature string.
+ */
 export async function signPayload(env: WorkerEnv, body: string): Promise<string> {
 	const secret = getWebhookSecret(env);
 	const key = await crypto.subtle.importKey(
