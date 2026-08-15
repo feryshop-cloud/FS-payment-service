@@ -5,6 +5,7 @@ import {
 	listWebhookQueue,
 	updateWebhookQueueItem,
 } from "./storage";
+import { logger } from "./utils/logger";
 
 /**
  * Retrieves the secret key used for signing outgoing webhook requests.
@@ -125,7 +126,8 @@ export async function retryPendingWebhooks(
 			item.attempts += 1;
 			if (item.attempts >= maxAttempts) {
 				await deleteWebhookQueueItem(env, item.id);
-				console.warn(`webhook dropped after ${maxAttempts} attempts`, {
+				logger.warn("webhook dropped after max attempts", {
+					maxAttempts,
 					id: item.id,
 					payment_id: item.payment_id,
 					event: item.event,

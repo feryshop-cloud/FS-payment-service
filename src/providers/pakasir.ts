@@ -6,6 +6,7 @@ import type {
 	WorkerEnv,
 } from "../types";
 import type { PaymentProvider } from "./index";
+import { logger } from "../utils/logger";
 
 function baseUrl(env: WorkerEnv): string {
 	return (env.PAKASIR_BASE_URL || "https://app.pakasir.com").replace(/\/+$/, "");
@@ -38,7 +39,7 @@ async function callApi<T>(
 		body: JSON.stringify(body),
 	});
 	if (!res.ok) {
-		console.error("pakasir api error", { path, status: res.status });
+		logger.error("pakasir api error", { path, status: res.status });
 		return null;
 	}
 	const json = (await res.json().catch(() => null)) as T | null;
@@ -81,7 +82,7 @@ export const PakasirProvider: PaymentProvider = {
 
 		const p = json?.payment;
 		if (!p || !p.payment_number) {
-			console.error("pakasir create missing payment_number", { order_id: req.order_id });
+			logger.error("pakasir create missing payment_number", { order_id: req.order_id });
 			return null;
 		}
 

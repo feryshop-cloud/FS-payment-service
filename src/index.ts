@@ -9,6 +9,7 @@ import { getPayment, getPaymentByOrder, listPayments, putPayment } from "./stora
 import { deliverNow, deliverWebhook, queueWebhook, retryPendingWebhooks } from "./webhook";
 import { renderPayPage } from "./pay-page";
 import { getActiveProvider, getProvider, normalizeProvider } from "./providers";
+import { logger } from "./utils/logger";
 
 const json = (data: unknown, status = 200, headers: Record<string, string> = {}) =>
 	new Response(JSON.stringify(data), {
@@ -112,7 +113,7 @@ async function createPayment(req: Request, env: WorkerEnv): Promise<Response> {
 	try {
 		record = await provider.create(env, body);
 	} catch (e) {
-		console.error("provider create failed", { provider: provider.id, error: e });
+		logger.error("provider create failed", { provider: provider.id, error: e });
 	}
 	if (!record) {
 		return json(
@@ -252,7 +253,7 @@ async function simulatePayment(
 	try {
 		updated = await provider.simulate(env, payment);
 	} catch (e) {
-		console.error("simulate failed", { provider: provider.id, error: e });
+		logger.error("simulate failed", { provider: provider.id, error: e });
 	}
 	if (!updated) {
 		return json(
@@ -385,7 +386,7 @@ async function cronHandler(env: WorkerEnv): Promise<Response> {
 						reconciled++;
 					}
 				} catch (e) {
-					console.error("reconcile failed", { order_id: payment.order_id, error: e });
+					logger.error("reconcile failed", { order_id: payment.order_id, error: e });
 				}
 			}
 		}
@@ -462,7 +463,7 @@ async function handleFetch(req: Request, env: WorkerEnv, ctx: ExecutionContext):
 
 		return withCors(json({ success: false, message: "Route tidak ditemukan" }, 404));
 	} catch (err: unknown) {
-		console.error("handler error", err);
+		logger.error("handler error", { err });
 		const message = err instanceof Error ? err.message : "Internal error";
 		return withCors(json({ success: false, message }, 500));
 	}
