@@ -1,22 +1,28 @@
-name: CI - Payment Service
+name: CI
 
 on:
   push:
-    branches: [main, master, develop]
+    branches: [main]
   pull_request:
-    branches: [main, master, develop]
+    branches: [main]
 
 jobs:
-  test:
-    name: Test (Payment Service)
+  build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
-          cache: "npm"
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: 'package-lock.json'
+
       - name: Install dependencies
         run: npm ci
-      - name: Run Tests
+
+      - name: Type check
+        run: npx tsc --noEmit
+
+      - name: Test
         run: npm run test
