@@ -2,7 +2,9 @@
 	"name": "payment-service",
 	"main": "src/index.ts",
 	"compatibility_date": "2026-08-05",
-	"compatibility_flags": ["nodejs_compat"],
+	"compatibility_flags": [
+		"nodejs_compat"
+	],
 	"observability": {
 		"enabled": true,
 		"head_sampling_rate": 1
@@ -16,7 +18,10 @@
 	],
 	"queues": {
 		"producers": [
-			{ "binding": "WEBHOOK_DELIVERY_QUEUE", "queue": "webhook-delivery" }
+			{
+				"binding": "WEBHOOK_DELIVERY_QUEUE",
+				"queue": "webhook-delivery"
+			}
 		],
 		"consumers": [
 			{
@@ -33,7 +38,9 @@
 		]
 	},
 	"triggers": {
-		"crons": ["*/5 * * * *"]
+		"crons": [
+			"*/5 * * * *"
+		]
 	},
 	"vars": {
 		"DEFAULT_EXPIRES_IN_SECONDS": "300",

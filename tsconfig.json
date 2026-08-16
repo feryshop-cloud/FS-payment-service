@@ -13,7 +13,8 @@
 		"allowSyntheticDefaultImports": true,
 		"forceConsistentCasingInFileNames": true,
 		"strict": true,
-		"skipLibCheck": true
+		"skipLibCheck": true,
+		"types": ["@cloudflare/workers-types"]
 	},
 	"exclude": ["test", "node_modules"],
 	"include": ["worker-configuration.d.ts", "src/**/*.ts"]
