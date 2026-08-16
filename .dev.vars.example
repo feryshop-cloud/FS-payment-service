@@ -6,3 +6,10 @@ PAYMENT_WEBHOOK_SECRET=dev-sandbox-secret-change-me
 # Buat Proyek di https://app.pakasir.com, salin Slug & Api Key.
 PAKASIR_PROJECT=
 PAKASIR_API_KEY=
+
+# SumoPod (dipakai saat PAYMENT_PROVIDER=sumopod)
+# API Key dari dashboard SumoPod. Webhook token/secret dari halaman Settings.
+SUMODOP_API_KEY=
+SUMODOP_WEBHOOK_TOKEN=
+# Alternatif verifikasi webhook via Svix signature (gantikan SUMODOP_WEBHOOK_TOKEN):
+# SUMODOP_WEBHOOK_SECRET=whsec_...

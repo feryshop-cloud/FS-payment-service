@@ -12,7 +12,7 @@ Cloudflare Worker payment gateway abstraction. Terpisah dari FS-Public dan terpi
 | ---------------------- | ----------------------------------------------------------------------------- |
 | `src/index.ts`         | Router & handler (create/status/pay/fail/simulate/pakasir-webhook/cron/admin) |
 | `src/types.ts`         | Shared types (`PaymentRecord`, `CreatePaymentResponse`, `WorkerEnv`)          |
-| `src/providers/`       | Adapter provider: `index.ts` (interface + factory), `mock.ts`, `pakasir.ts`   |
+| `src/providers/`       | Adapter provider: `index.ts` (interface + factory), `mock.ts`, `pakasir.ts`, `sumopod.ts`   |
 | `src/storage.ts`       | KV wrapper (get/put/list, index by order_id, webhook queue)                   |
 | `src/webhook.ts`       | HMAC sign, build payload, queue & retry webhook                               |
 | `src/pay-page.ts`      | HTML payment page (simulasi UI, mock provider)                                |
@@ -31,6 +31,7 @@ npm run cf-typegen   # regenerasi worker-configuration.d.ts
 
 - `mock`: VA fiktif, page simulasi di worker. Tanpa konfigurasi secret.
 - `pakasir`: hit API `transactioncreate` / `transactiondetail` / `paymentsimulation`. Butuh `PAKASIR_PROJECT` + `PAKASIR_API_KEY`. Webhook masuk tanpa signature → diverifikasi cross-check `transactiondetail`.
+- `sumopod`: hosted page (`POST /payments`), redirect customer ke `payment_url`. Butuh `SUMODOP_API_KEY`. Webhook diverifikasi `X-Webhook-Token` (`SUMODOP_WEBHOOK_TOKEN`) atau Svix signature (`SUMODOP_WEBHOOK_SECRET`). Tanpa endpoint simulate/status.
 - Mode switch via `PAYMENT_PROVIDER` env. Default `mock`.
 
 ## Konvensi

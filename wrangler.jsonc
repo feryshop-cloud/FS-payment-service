@@ -10,8 +10,8 @@
 	"kv_namespaces": [
 		{
 			"binding": "PAYMENTS",
-			"id": "replace_with_real_kv_id_after_create",
-			"preview_id": "replace_with_real_kv_id_after_create",
+			"id": "a70cdc5e7eb64495ab1197b579545a97",
+			"preview_id": "a70cdc5e7eb64495ab1197b579545a97",
 		},
 	],
 	"triggers": {
@@ -24,5 +24,8 @@
 		"PAKASIR_METHOD": "qris",
 		"PAKASIR_SANDBOX": "true",
 		"PAKASIR_BASE_URL": "https://app.pakasir.com",
+		"SUMODOP_METHOD": "QRIS",
+		"SUMODOP_SANDBOX": "true",
+		"SUMODOP_BASE_URL": "https://api-pay-sandbox.sumopod.com/api/v1",
 	},
 }

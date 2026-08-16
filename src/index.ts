@@ -54,8 +54,9 @@ function toResponse(record: PaymentRecord, origin: string): CreatePaymentRespons
 		total_payment: record.total_payment,
 		fee: record.fee,
 		payment_method: record.payment_method,
-		// Mock: halaman simulasi di worker sendiri. Pakasir API mode: tanpa hosted page.
-		payment_url: isMock ? `${origin}/p/${record.id}` : undefined,
+		// Mock: halaman simulasi di worker sendiri. SumoPod: hosted page provider.
+		// Pakasir API mode: tanpa hosted page.
+		payment_url: record.payment_url ?? (isMock ? `${origin}/p/${record.id}` : undefined),
 		expires_at: record.expires_at,
 		created_at: record.created_at,
 		paid_at: record.paid_at,
@@ -278,18 +279,25 @@ async function simulatePayment(
 }
 
 /**
- * Webhook masuk dari Pakasir. Pakasir TANPA signature → diverifikasi via
- * transactiondetail (cross-check). Status valid → update KV + forward ke FS-Public.
+ * Webhook masuk dari provider eksternal (pakasir / sumopod).
+ * Pakasir TANPA signature → diverifikasi via transactiondetail (cross-check).
+ * SumoPod → verifikasi X-Webhook-Token atau Svix signature.
+ * Status valid → update KV + forward ke FS-Public.
  */
-async function pakasirWebhook(
+async function providerWebhook(
 	req: Request,
 	env: WorkerEnv,
 	ctx: ExecutionContext,
+	providerId: PaymentProviderId,
 ): Promise<Response> {
 	const rawBody = await req.text();
 
-	const providers = [getProvider("pakasir")];
-	const result = await providers[0].verifyWebhook!(env, rawBody, req.headers);
+	const provider = getProvider(providerId);
+	if (!provider.verifyWebhook) {
+		return json({ success: true, received: true, verified: false }, 200); // ack, jangan retry
+	}
+
+	const result = await provider.verifyWebhook(env, rawBody, req.headers);
 
 	if (!result.ok || !result.order_id) {
 		return json({ success: true, received: true, verified: false }, 200); // ack, jangan retry
@@ -301,13 +309,19 @@ async function pakasirWebhook(
 	}
 
 	// Idempotent: jangan menimpa status final.
-	if (payment.status === "paid" || payment.status === "failed" || payment.status === "expired") {
+	if (payment.status !== "pending") {
 		return json({ success: true, received: true, deduplicated: true }, 200);
 	}
 
 	if (result.status === "paid") {
 		payment.status = "paid";
 		payment.paid_at = result.paid_at || new Date().toISOString();
+	} else if (result.status === "failed") {
+		payment.status = "failed";
+		payment.failure_reason = result.failure_reason || "Pembayaran gagal di gateway";
+	} else if (result.status === "expired") {
+		payment.status = "expired";
+		payment.failure_reason = "Waktu pembayaran habis";
 	}
 	// pending → biarkan, jangan apply; webhook dianggap ack.
 	if (result.provider_data) {
@@ -315,7 +329,7 @@ async function pakasirWebhook(
 	}
 
 	await putPayment(env, payment);
-	if (payment.status === "paid") {
+	if (payment.status !== "pending") {
 		await deliverNow(env, payment, ctx);
 	}
 
@@ -450,7 +464,11 @@ async function handleFetch(req: Request, env: WorkerEnv, ctx: ExecutionContext):
 		}
 
 		if (req.method === "POST" && path === "/webhooks/pakasir") {
-			return withCors(await pakasirWebhook(req, env, ctx));
+			return withCors(await providerWebhook(req, env, ctx, "pakasir"));
+		}
+
+		if (req.method === "POST" && path === "/webhooks/sumopod") {
+			return withCors(await providerWebhook(req, env, ctx, "sumopod"));
 		}
 
 		if (req.method === "GET" && payPageMatch) {

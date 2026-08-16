@@ -6,6 +6,27 @@ import type { WorkerEnv } from "../src/types";
 
 const CB_URL = "https://fs-public.example.com/api/webhooks/payment";
 
+async function svixSignature(
+	secret: string,
+	svixId: string,
+	ts: number,
+	body: string,
+): Promise<string> {
+	const key = await crypto.subtle.importKey(
+		"raw",
+		Uint8Array.from(atob(secret.replace(/^whsec_/, "")), (c) => c.charCodeAt(0)),
+		{ name: "HMAC", hash: "SHA-256" },
+		false,
+		["sign"],
+	);
+	const sig = await crypto.subtle.sign(
+		"HMAC",
+		key,
+		new TextEncoder().encode(`${svixId}.${ts}.${body}`),
+	);
+	return btoa(Array.from(new Uint8Array(sig)).map((b) => String.fromCharCode(b)).join(""));
+}
+
 async function createPayment(overrides: Record<string, unknown> = {}) {
 	const res = await SELF.fetch("https://example.com/v1/payments", {
 		method: "POST",
@@ -261,6 +282,190 @@ describe("pakasir provider", () => {
 			{} as any,
 		);
 		expect(record).toBeNull();
+	});
+});
+
+describe("sumopod provider", () => {
+	const SUMODOP_ENV = {
+		SUMODOP_API_KEY: "test-api-key",
+		SUMODOP_WEBHOOK_TOKEN: "whtok_test",
+		SUMODOP_BASE_URL: "https://api-pay-sandbox.sumopod.com/api/v1",
+	} as Partial<WorkerEnv>;
+
+	const SUMODOP_BODY = {
+		payment_id: "1f8e7b6a-3c4d-5e6f-8a9b-0c1d2e3f4a5b",
+		order_id: "TSON-123456",
+		amount: 50000,
+		fee: 750,
+		net_amount: 49250,
+		payment_link_url: "https://pay.sumopod.com/pay/abc123",
+		status: "pending",
+		expires_at: "2026-06-19T12:00:00Z",
+	};
+
+	it("create -> payment_url hosted page + total_payment/fee dari response", async () => {
+		const { SumodopProvider } = await import("../src/providers/sumopod");
+		fetchMock
+			.get("https://api-pay-sandbox.sumopod.com")
+			.intercept({
+				method: "POST",
+				path: "/api/v1/payments",
+				headers: { "X-Api-Key": "test-api-key" },
+			})
+			.reply(200, SUMODOP_BODY);
+
+		const record = await SumodopProvider.create(
+			{ ...(env as WorkerEnv), ...SUMODOP_ENV },
+			{
+				order_id: "TSON-123456",
+				amount: 50000,
+				callback_url: CB_URL,
+				return_url: "https://example.com/invoices/TSON-123456",
+			},
+		);
+
+		expect(record).not.toBeNull();
+		expect(record!.provider).toBe("sumopod");
+		expect(record!.payment_url).toBe(SUMODOP_BODY.payment_link_url);
+		expect(record!.total_payment).toBe(50000);
+		expect(record!.fee).toBe(750);
+		expect(record!.payment_method).toBe("qris");
+		expect(record!.payment_code).toBe("");
+		expect(record!.expires_at).toBe(new Date(SUMODOP_BODY.expires_at).getTime() / 1000);
+	});
+
+	it("create tanpa SUMODOP_API_KEY -> null (provider tidak aktif)", async () => {
+		const { SumodopProvider } = await import("../src/providers/sumopod");
+		const record = await SumodopProvider.create({} as WorkerEnv, {
+			order_id: "TSON-X",
+			amount: 1000,
+			callback_url: CB_URL,
+		});
+		expect(record).toBeNull();
+	});
+
+	it("create gagal -> null", async () => {
+		const { SumodopProvider } = await import("../src/providers/sumopod");
+		fetchMock
+			.get("https://api-pay-sandbox.sumopod.com")
+			.intercept({ method: "POST", path: "/api/v1/payments" })
+			.reply(500, {});
+		const record = await SumodopProvider.create(
+			{ ...(env as WorkerEnv), ...SUMODOP_ENV },
+			{ order_id: "TSON-777", amount: 10000, callback_url: CB_URL },
+		);
+		expect(record).toBeNull();
+	});
+
+	it("verifyWebhook: token valid + payment.completed -> paid", async () => {
+		const { SumodopProvider } = await import("../src/providers/sumopod");
+		const result = await SumodopProvider.verifyWebhook!(
+			{ ...(env as WorkerEnv), ...SUMODOP_ENV },
+			JSON.stringify({
+				event_type: "payment.completed",
+				data: {
+					payment_id: SUMODOP_BODY.payment_id,
+					order_id: "TSON-123456",
+					amount: 50000,
+					fee: 750,
+					net_amount: 49250,
+					status: "completed",
+					payment_method: "qris",
+					completed_at: "2026-06-18T12:00:00Z",
+				},
+			}),
+			new Headers({ "X-Webhook-Token": "whtok_test" }),
+		);
+		expect(result.ok).toBe(true);
+		expect(result.status).toBe("paid");
+		expect(result.order_id).toBe("TSON-123456");
+	});
+
+	it("verifyWebhook: token salah -> ditolak", async () => {
+		const { SumodopProvider } = await import("../src/providers/sumopod");
+		const result = await SumodopProvider.verifyWebhook!(
+			{ ...(env as WorkerEnv), ...SUMODOP_ENV },
+			JSON.stringify({ event_type: "payment.completed", data: { order_id: "X" } }),
+			new Headers({ "X-Webhook-Token": "salah" }),
+		);
+		expect(result.ok).toBe(false);
+	});
+
+	it("verifyWebhook: svix signature valid -> failed", async () => {
+		const { SumodopProvider } = await import("../src/providers/sumopod");
+		const secret = "whsec_" + btoa("sumopod-test-secret-0123456789");
+		const ts = Math.floor(Date.now() / 1000);
+		const body = JSON.stringify({
+			event_type: "payment.failed",
+			data: { order_id: "TSON-123456", amount: 50000, status: "failed" },
+		});
+		const sig = await svixSignature(secret, "msg_123", ts, body);
+		const result = await SumodopProvider.verifyWebhook!(
+			{
+				...(env as WorkerEnv),
+				...SUMODOP_ENV,
+				SUMODOP_WEBHOOK_TOKEN: undefined,
+				SUMODOP_WEBHOOK_SECRET: secret,
+			},
+			body,
+			new Headers({
+				"svix-id": "msg_123",
+				"svix-timestamp": String(ts),
+				"svix-signature": `v1,${sig}`,
+			}),
+		);
+		expect(result.ok).toBe(true);
+		expect(result.status).toBe("failed");
+	});
+
+	it("verifyWebhook: tanpa token/secret terkonfigurasi -> ditolak", async () => {
+		const { SumodopProvider } = await import("../src/providers/sumopod");
+		const result = await SumodopProvider.verifyWebhook!(
+			{ ...(env as WorkerEnv), SUMODOP_API_KEY: "k", SUMODOP_WEBHOOK_TOKEN: undefined },
+			JSON.stringify({ event_type: "payment.completed", data: { order_id: "X" } }),
+			new Headers(),
+		);
+		expect(result.ok).toBe(false);
+	});
+
+	it("simulate tidak didukung sumopod -> 400", async () => {
+		const { putPayment } = await import("../src/storage");
+		await putPayment(env as WorkerEnv, {
+			id: "sm_simtest",
+			order_id: "TSON-SIM",
+			provider: "sumopod",
+			amount: 50000,
+			currency: "IDR",
+			payment_code: "",
+			status: "pending",
+			created_at: new Date().toISOString(),
+			expires_at: Math.floor(Date.now() / 1000) + 300,
+			callback_url: CB_URL,
+			webhook_delivered: false,
+			webhook_attempts: 0,
+		} as never);
+
+		const res = await SELF.fetch("https://example.com/v1/payments/sm_simtest/simulate", {
+			method: "POST",
+		});
+		const body = (await res.json()) as { success: boolean };
+		expect(res.status).toBe(400);
+		expect(body.success).toBe(false);
+	});
+
+	it("route /webhooks/sumopod terdaftar (ack tanpa config API key)", async () => {
+		const res = await SELF.fetch("https://example.com/webhooks/sumopod", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({
+				event_type: "payment.test",
+				data: { order_id: "X" },
+			}),
+		});
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as { success: boolean; verified: boolean };
+		expect(body.success).toBe(true);
+		expect(body.verified).toBe(false);
 	});
 });
 

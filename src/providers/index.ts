@@ -7,6 +7,7 @@ import type {
 } from "../types";
 import { MockProvider } from "./mock";
 import { PakasirProvider } from "./pakasir";
+import { SumodopProvider } from "./sumopod";
 
 export interface PaymentProvider {
 	readonly id: PaymentProviderId;
@@ -23,12 +24,13 @@ export interface PaymentProvider {
 
 export function normalizeProvider(env: WorkerEnv): PaymentProviderId | null {
 	const raw = (env.PAYMENT_PROVIDER || "").trim().toLowerCase();
-	if (raw === "mock" || raw === "pakasir") return raw as PaymentProviderId;
+	if (raw === "mock" || raw === "pakasir" || raw === "sumopod") return raw as PaymentProviderId;
 	return null;
 }
 
 export function getProvider(id: PaymentProviderId): PaymentProvider {
 	if (id === "pakasir") return PakasirProvider;
+	if (id === "sumopod") return SumodopProvider;
 	return MockProvider;
 }
 

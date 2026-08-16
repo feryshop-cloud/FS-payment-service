@@ -1,0 +1,160 @@
+# SumoPod Managed Payment API
+
+> SumoPod Managed Payment provides payment gateway services, API integration, payment link generation, and webhook notification handling for applications.
+
+## API Base URL
+
+- Sandbox: `https://api-pay-sandbox.sumopod.com/api/v1`
+
+## Authentication
+
+All API requests require an API key passed via the header:
+
+- `X-Api-Key: YOUR_API_KEY`
+
+---
+
+## Supported Payment Methods
+
+| Name | Code | Settlement Period | Fee |
+| :--- | :--- | :--- | :--- |
+| QRIS | `QRIS` | 2 days | 0.7% + Rp 300 |
+| QRIS Instant | `QRIS_INSTANT` | 0 days | 1.5% + Rp 300 |
+
+---
+
+## Create Payment
+
+Generates a payment link for customers via API.
+
+- **Endpoint:** `POST /payments`
+- **Request Headers:**
+  - `Content-Type: application/json`
+  - `X-Api-Key: YOUR_API_KEY`
+
+### Request Body Schema
+
+```json
+{
+  "order_id": "string (required)",
+  "amount": "number (required)",
+  "currency": "string (required, e.g., IDR)",
+  "expires_in_hours": "number (optional, defaults to 24, max 24)",
+  "success_return_url": "string (optional)",
+  "cancel_return_url": "string (optional)",
+  "payment_method_type_code": "string (optional, e.g., QRIS)"
+}
+```
+
+### Example Request (cURL)
+
+```bash
+curl -X POST https://api-pay-sandbox.sumopod.com/api/v1/payments \
+  -H "Content-Type: application/json" \
+  -H "X-Api-Key: YOUR_API_KEY" \
+  -d '{
+    "order_id": "INV-2026-001",
+    "amount": 50000,
+    "currency": "IDR",
+    "expires_in_hours": 24,
+    "success_return_url": "https://yourapp.com/success",
+    "cancel_return_url": "https://yourapp.com/cancel",
+    "payment_method_type_code": "QRIS"
+  }'
+```
+
+### Response Schema
+
+```json
+{
+  "payment_id": "uuid",
+  "order_id": "string",
+  "amount": "number",
+  "fee": "number",
+  "net_amount": "number",
+  "payment_link_url": "string",
+  "status": "string (e.g., pending)",
+  "expires_at": "string (ISO 8601)"
+}
+```
+
+---
+
+## Webhooks
+
+SumoPod sends HTTP POST requests to your configured webhook URL when payment events occur. Your endpoint must respond with a **2xx status code within 10 seconds**.
+
+### Supported Events
+
+- `payment.completed`: Payment has been successfully completed.
+- `payment.failed`: Payment has failed.
+- `payment.expired`: Payment link has expired without payment.
+- `payment.test`: Test event sent from the Settings page.
+
+### Sample Webhook Payload (`payment.completed`)
+
+```json
+{
+  "event_type": "payment.completed",
+  "data": {
+    "payment_id": "uuid",
+    "order_id": "INV-2026-001",
+    "amount": 50000,
+    "fee": 750,
+    "net_amount": 49250,
+    "status": "completed",
+    "payment_method": "qris",
+    "completed_at": "2026-06-18T12:00:00Z"
+  }
+}
+```
+
+---
+
+## Webhook Security & Verification
+
+Incoming webhook requests include verification headers. Never trust a webhook payload without verifying it.
+
+### Method 1: Svix Signature Verification
+
+Requests include `svix-id`, `svix-timestamp`, and `svix-signature` headers.
+
+**Node.js Implementation Example:**
+
+```javascript
+const crypto = require("crypto");
+
+function verifyWebhookSignature(secret, svixId, svixTimestamp, svixSignature, rawBody) {
+  const secretBytes = Buffer.from(secret.replace("whsec_", ""), "base64");
+  const signedContent = `${svixId}.${svixTimestamp}.${rawBody}`;
+
+  const expectedSignature = crypto
+    .createHmac("sha256", secretBytes)
+    .update(signedContent)
+    .digest("base64");
+
+  const signatures = svixSignature.split(" ").map((s) => s.split(",")[1]);
+  return signatures.includes(expectedSignature);
+}
+```
+
+*Note: Ensure you use the raw, unparsed request body (e.g., `express.raw()`) to avoid signature mismatch.*
+
+### Method 2: Webhook Token Verification
+
+A simpler alternative is comparing the `X-Webhook-Token` header directly against your project's webhook token (`whtok_...`).
+
+```javascript
+app.post("/webhook", express.json(), (req, res) => {
+  const expected = process.env.WEBHOOK_TOKEN; // whtok_...
+  const received = req.headers["x-webhook-token"];
+
+  if (expected !== received) {
+    return res.status(401).send("Invalid webhook token");
+  }
+
+  const event = req.body;
+  console.log("Verified webhook:", event.event_type);
+  res.sendStatus(200);
+});
+```

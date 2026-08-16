@@ -1,4 +1,4 @@
-export const PAYMENT_PROVIDERS = ["mock", "pakasir"] as const;
+export const PAYMENT_PROVIDERS = ["mock", "pakasir", "sumopod"] as const;
 export type PaymentProviderId = (typeof PAYMENT_PROVIDERS)[number];
 
 export const PAYMENT_STATUSES = ["pending", "paid", "failed", "expired"] as const;
@@ -112,7 +112,7 @@ export interface ProviderWebhookResult {
 
 export interface WorkerEnv {
 	PAYMENTS: KVNamespace;
-	// Provider aktif: "mock" | "pakasir"
+	// Provider aktif: "mock" | "pakasir" | "sumopod"
 	PAYMENT_PROVIDER?: string;
 	// Secret webhook (FS-Public side) — kompat mundur dengan nama lama.
 	PAYMENT_WEBHOOK_SECRET?: string;
@@ -126,4 +126,11 @@ export interface WorkerEnv {
 	PAKASIR_METHOD?: string;
 	PAKASIR_SANDBOX?: string;
 	PAKASIR_BASE_URL?: string;
+	// SumoPod
+	SUMODOP_API_KEY?: string;
+	SUMODOP_METHOD?: string;
+	SUMODOP_SANDBOX?: string;
+	SUMODOP_BASE_URL?: string;
+	SUMODOP_WEBHOOK_TOKEN?: string;
+	SUMODOP_WEBHOOK_SECRET?: string;
 }
