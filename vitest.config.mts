@@ -8,7 +8,10 @@ export default defineWorkersConfig({
 				// Test selalu berjalan dengan mock provider — jangan ikut PAYMENT_PROVIDER
 				// dari wrangler.jsonc (bisa ter-set ke provider live seperti sumopod).
 				miniflare: {
-					bindings: { PAYMENT_PROVIDER: "mock" },
+					bindings: {
+						PAYMENT_PROVIDER: "mock",
+						PAYMENT_WEBHOOK_SECRET: "test-webhook-secret",
+					},
 				},
 			},
 		},

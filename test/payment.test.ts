@@ -611,6 +611,79 @@ describe("sandbox action & URL validation", () => {
 	});
 });
 
+describe("hardening: SSRF / admin token / CORS / webhook secret", () => {
+	it("create menolak callback_url ke localhost/private (SSRF guard)", async () => {
+		for (const url of [
+			"http://localhost:3000/hook",
+			"http://127.0.0.1/hook",
+			"http://10.0.0.5/hook",
+			"http://192.168.1.1/hook",
+			"http://169.254.169.254/latest/meta-data",
+			"http://[::1]:3000/hook",
+		]) {
+			const res = await SELF.fetch("https://example.com/v1/payments", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					order_id: `TSON-SSRF-${Math.random()}`,
+					amount: 1000,
+					callback_url: url,
+				}),
+			});
+			expect(res.status, url).toBe(400);
+		}
+	});
+
+	it("adminTokenOk: cocok constant-time, tanpa token = terbuka", async () => {
+		const { adminTokenOk } = await import("../src/index");
+		const envT = { SANDBOX_ADMIN_TOKEN: "rahasia-admin" } as WorkerEnv;
+		expect(
+			adminTokenOk(envT, new Request("https://x.com/admin", { headers: { "X-Payment-Admin-Token": "rahasia-admin" } })),
+		).toBe(true);
+		expect(adminTokenOk(envT, new Request("https://x.com/admin", { headers: { "X-Payment-Admin-Token": "salah" } }))).toBe(
+			false,
+		);
+		expect(adminTokenOk(envT, new Request("https://x.com/admin"))).toBe(false);
+		expect(adminTokenOk({} as WorkerEnv, new Request("https://x.com/admin"))).toBe(true);
+	});
+
+	it("corsHeaders: echo origin yang diizinkan, bukan join list", async () => {
+		const { corsHeaders } = await import("../src/index");
+		const envC = { ALLOWED_ORIGINS: "https://app.example.com, https://admin.example.com" } as WorkerEnv;
+		expect(corsHeaders(envC, "https://app.example.com")["Access-Control-Allow-Origin"]).toBe(
+			"https://app.example.com",
+		);
+		expect(corsHeaders(envC, "https://evil.example.com")["Access-Control-Allow-Origin"]).toBeUndefined();
+		expect(corsHeaders(envC, "")["Access-Control-Allow-Origin"]).toBeUndefined();
+		expect(corsHeaders({} as WorkerEnv, "https://x.com")["Access-Control-Allow-Origin"]).toBe("*");
+	});
+
+	it("deliverWebhook: tanpa secret -> ditolak (fail-closed)", async () => {
+		const { deliverWebhook } = await import("../src/webhook");
+		const item = {
+			id: "wh_x",
+			payment_id: "p1",
+			order_id: "o1",
+			event: "payment.paid",
+			callback_url: CB_URL,
+			payload: {
+				event: "payment.paid",
+				event_id: "evt_x",
+				payment_id: "p1",
+				order_id: "o1",
+				status: "paid",
+				amount: 1000,
+				currency: "IDR",
+				payment_code: "",
+				timestamp: new Date().toISOString(),
+			},
+			queued_at: new Date().toISOString(),
+			attempts: 0,
+		} as never;
+		expect(await deliverWebhook({} as WorkerEnv, item)).toBe(false);
+	});
+});
+
 describe("expired", () => {
 	it("lazy expire: GET status menandai expired setelah expires_at lewat", async () => {
 		const { json } = await createPayment({ expires_in_seconds: 999999 });

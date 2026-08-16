@@ -120,6 +120,8 @@ export interface WorkerEnv {
 	DEFAULT_EXPIRES_IN_SECONDS?: string;
 	MAX_WEBHOOK_ATTEMPTS?: string;
 	ALLOWED_ORIGINS?: string;
+	// Set "true" untuk mengizinkan callback_url menuju localhost/private (dev). Default: diblokir (SSRF guard).
+	ALLOW_PRIVATE_CALLBACKS?: string;
 	// Token admin untuk aksi sandbox (/pay /fail /simulate). Kosong = hanya mock/dev.
 	SANDBOX_ADMIN_TOKEN?: string;
 	// Pakasir

@@ -9,11 +9,10 @@ import { logger } from "./utils/logger";
 
 /**
  * Retrieves the secret key used for signing outgoing webhook requests.
+ * Fail-closed: null jika tidak dikonfigurasi (jangan pakai fallback publik).
  */
-export function getWebhookSecret(env: WorkerEnv): string {
-	return (
-		env.PAYMENT_WEBHOOK_SECRET || env.MOCK_PAYMENT_WEBHOOK_SECRET || "dev-sandbox-secret-change-me"
-	);
+export function getWebhookSecret(env: WorkerEnv): string | null {
+	return env.PAYMENT_WEBHOOK_SECRET || env.MOCK_PAYMENT_WEBHOOK_SECRET || null;
 }
 
 function toU8(value: string): Uint8Array {
@@ -33,6 +32,7 @@ function toHex(buffer: ArrayBuffer): string {
  */
 export async function signPayload(env: WorkerEnv, body: string): Promise<string> {
 	const secret = getWebhookSecret(env);
+	if (!secret) throw new Error("PAYMENT_WEBHOOK_SECRET tidak dikonfigurasi");
 	const key = await crypto.subtle.importKey(
 		"raw",
 		toU8(secret),
@@ -88,6 +88,12 @@ export async function queueWebhook(env: WorkerEnv, record: PaymentRecord): Promi
 }
 
 export async function deliverWebhook(env: WorkerEnv, item: WebhookQueueItem): Promise<boolean> {
+	if (!getWebhookSecret(env)) {
+		logger.error("webhook delivery skipped: PAYMENT_WEBHOOK_SECRET tidak dikonfigurasi", {
+			id: item.id,
+		});
+		return false;
+	}
 	const body = JSON.stringify(item.payload);
 	const signature = await signPayload(env, body);
 

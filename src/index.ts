@@ -28,7 +28,7 @@ function safeEqual(a: string, b: string): boolean {
 }
 
 /** Aksi sandbox (/pay, /fail, /simulate) hanya boleh saat token admin disediakan (jika dikonfigurasi). */
-function adminTokenOk(env: WorkerEnv, req: Request): boolean {
+export function adminTokenOk(env: WorkerEnv, req: Request): boolean {
 	const token = env.SANDBOX_ADMIN_TOKEN;
 	if (!token) return true; // dev mode tanpa token → terbuka (mock only).
 	const provided = req.headers.get("x-payment-admin-token") || "";
@@ -44,19 +44,66 @@ function isValidHttpUrl(value: string): boolean {
 	}
 }
 
-const corsHeaders = (env: WorkerEnv): Record<string, string> => {
-	const allowed = (env.ALLOWED_ORIGINS || "*")
+/** SSRF guard: blokir host yang mengarah ke localhost / jaringan privat. */
+function isPrivateIpv4(hostname: string): boolean {
+	const parts = hostname.split(".");
+	if (parts.length !== 4) return false;
+	const nums = parts.map((p) => (/^\d+$/.test(p) ? Number(p) : NaN));
+	if (nums.some((n) => Number.isNaN(n) || n < 0 || n > 255)) return false;
+	const [a, b] = nums;
+	if (a === 0 || a === 10 || a === 127 || a === 169) return true; // 169.254.169.254 metadata ikut terblokir
+	if (a === 100 && b >= 64 && b <= 127) return true; // CGNAT
+	if (a === 172 && b >= 16 && b <= 31) return true;
+	if (a === 192 && b === 168) return true;
+	if (a === 198 && (b === 18 || b === 19)) return true;
+	if (a >= 240) return true; // reserved
+	return false;
+}
+
+function isPrivateHost(hostname: string): boolean {
+	const h = hostname.toLowerCase().replace(/^\[|\]$/g, "");
+	if (h === "localhost" || h.endsWith(".localhost")) return true;
+	if (/(^|\.)(local|lan|internal|localdomain|home|corp)$/.test(h)) return true;
+
+	if (h.includes(":")) {
+		if (h === "::" || h === "::1") return true;
+		if (h.startsWith("::ffff:")) return isPrivateIpv4(h.slice(7));
+		if (h.startsWith("fc") || h.startsWith("fd")) return true; // fc00::/7 (ULA)
+		if (/^fe[89ab]/.test(h)) return true; // fe80::/10 (link-local)
+		if (h.startsWith("2001:db8")) return true; // dokumentasi
+		return false;
+	}
+
+	return isPrivateIpv4(h);
+}
+
+function parseAllowedOrigins(env: WorkerEnv): string[] {
+	return (env.ALLOWED_ORIGINS || "*")
 		.split(",")
 		.map((s) => s.trim())
 		.filter(Boolean);
-	return {
-		"Access-Control-Allow-Origin": allowed.includes("*") ? "*" : allowed.join(", ") || "*",
+}
+
+/** CORS: echo Origin peminta hanya bila tercantum di ALLOWED_ORIGINS (bukan join string). */
+export const corsHeaders = (env: WorkerEnv, origin = ""): Record<string, string> => {
+	const allowed = parseAllowedOrigins(env);
+	const headers: Record<string, string> = {
 		"Access-Control-Allow-Methods": "GET,POST,OPTIONS,PATCH",
 		"Access-Control-Allow-Headers":
 			"Content-Type, Authorization, x-payment-signature, x-mock-signature, x-payment-event, x-payment-idempotency",
 		"Access-Control-Max-Age": "86400",
 	};
+	if (allowed.includes("*")) {
+		headers["Access-Control-Allow-Origin"] = "*";
+	} else if (origin && allowed.includes(origin)) {
+		headers["Access-Control-Allow-Origin"] = origin;
+	}
+	return headers;
 };
+
+function reqOrigin(req: Request): string {
+	return req.headers.get("Origin") || "";
+}
 
 function getOrigin(req: Request): string {
 	const url = new URL(req.url);
@@ -108,6 +155,14 @@ async function createPayment(req: Request, env: WorkerEnv): Promise<Response> {
 	if (!body.callback_url || !isValidHttpUrl(body.callback_url)) {
 		return json(
 			{ success: false, message: "callback_url wajib diisi dan harus berupa URL http(s)" },
+			400,
+			corsHeaders(env),
+		);
+	}
+	const allowPrivateCallback = env.ALLOW_PRIVATE_CALLBACKS === "true";
+	if (!allowPrivateCallback && isPrivateHost(new URL(body.callback_url).hostname)) {
+		return json(
+			{ success: false, message: "callback_url menuju host pribadi (localhost/private) tidak diizinkan" },
 			400,
 			corsHeaders(env),
 		);
@@ -462,19 +517,13 @@ async function handleFetch(req: Request, env: WorkerEnv, ctx: ExecutionContext):
 	const path = url.pathname;
 
 	if (req.method === "OPTIONS") {
-		return new Response(null, { status: 204, headers: corsHeaders(env) });
+		return new Response(null, { status: 204, headers: corsHeaders(env, reqOrigin(req)) });
 	}
 
 	const withCors = <T extends Response>(res: T): T => {
-		res.headers.set("Access-Control-Allow-Origin", corsHeaders(env)["Access-Control-Allow-Origin"]);
-		res.headers.set(
-			"Access-Control-Allow-Methods",
-			corsHeaders(env)["Access-Control-Allow-Methods"],
-		);
-		res.headers.set(
-			"Access-Control-Allow-Headers",
-			corsHeaders(env)["Access-Control-Allow-Headers"],
-		);
+		for (const [key, value] of Object.entries(corsHeaders(env, reqOrigin(req)))) {
+			res.headers.set(key, value);
+		}
 		return res;
 	};
 
@@ -523,6 +572,9 @@ async function handleFetch(req: Request, env: WorkerEnv, ctx: ExecutionContext):
 		}
 
 		if (req.method === "GET" && (path === "/admin" || path === "/admin/")) {
+			if (!adminTokenOk(env, req)) {
+				return withCors(json({ success: false, message: "Akses admin ditolak" }, 403));
+			}
 			return withCors(await adminList(env));
 		}
 

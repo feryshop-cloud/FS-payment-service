@@ -45,6 +45,8 @@ npm run cf-typegen   # regenerasi worker-configuration.d.ts
 ## Keamanan
 
 - `PAYMENT_WEBHOOK_SECRET` (webhook ke FS-Public) dan `PAKASIR_API_KEY` tidak boleh di-commit (pakai `.dev.vars` / `wrangler secret put`).
-- Signature webhook = HMAC-SHA256 hex dari raw body. FS-Public verifikasi dengan secret yang sama.
+- Signature webhook = HMAC-SHA256 hex dari raw body. FS-Public verifikasi dengan secret yang sama. Tanpa secret → webhook ditolak (fail-closed, tanpa fallback publik).
 - Jangan simpan secret di `wrangler.jsonc`.
-- Endpoint sandbox (`/v1/payments/:id/pay|fail|simulate`) hanya untuk provider `mock`. Jika `SANDBOX_ADMIN_TOKEN` diset, wajib header `X-Payment-Admin-Token` (constant-time compare).
+- Endpoint sandbox (`/v1/payments/:id/pay|fail|simulate`) hanya untuk provider `mock`. Jika `SANDBOX_ADMIN_TOKEN` diset, wajib header `X-Payment-Admin-Token` (constant-time compare). `/admin` memakai guard yang sama.
+- `callback_url` wajib http(s) publik: host localhost/private diblokir (SSRF guard). Override dev: `ALLOW_PRIVATE_CALLBACKS=true`.
+- CORS: `ALLOWED_ORIGINS` comma-separated; response me-echo Origin peminta bila tercantum (bukan join list).

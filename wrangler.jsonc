@@ -5,17 +5,17 @@
 	"compatibility_flags": ["nodejs_compat"],
 	"observability": {
 		"enabled": true,
-		"head_sampling_rate": 1,
+		"head_sampling_rate": 1
 	},
 	"kv_namespaces": [
 		{
 			"binding": "PAYMENTS",
 			"id": "a70cdc5e7eb64495ab1197b579545a97",
-			"preview_id": "a70cdc5e7eb64495ab1197b579545a97",
-		},
+			"preview_id": "a70cdc5e7eb64495ab1197b579545a97"
+		}
 	],
 	"triggers": {
-		"crons": ["* * * * *"],
+		"crons": ["* * * * *"]
 	},
 	"vars": {
 		"DEFAULT_EXPIRES_IN_SECONDS": "300",
@@ -26,6 +26,6 @@
 		"PAKASIR_BASE_URL": "https://app.pakasir.com",
 		"SUMODOP_METHOD": "QRIS",
 		"SUMODOP_SANDBOX": "true",
-		"SUMODOP_BASE_URL": "https://api-pay-sandbox.sumopod.com/api/v1",
-	},
+		"SUMODOP_BASE_URL": "https://api-pay-sandbox.sumopod.com/api/v1"
+	}
 }

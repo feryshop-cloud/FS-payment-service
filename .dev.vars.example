@@ -2,6 +2,9 @@
 # Harus sama dengan PAYMENT_WEBHOOK_SECRET di FS-Public .env.local
 PAYMENT_WEBHOOK_SECRET=dev-sandbox-secret-change-me
 
+# Dev: izinkan callback_url ke localhost/private (jika FS-Public jalan lokal). Jangan set di produksi.
+# ALLOW_PRIVATE_CALLBACKS=true
+
 # Token admin untuk aksi sandbox (/v1/payments/:id/pay|fail|simulate).
 # Kosong = hanya provider mock yang boleh pakai (dev). Set di produksi untuk fail-closed.
 # Kirim lewat header: X-Payment-Admin-Token: <token>
