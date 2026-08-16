@@ -5,7 +5,7 @@ import type {
 	PaymentProviderId,
 	WorkerEnv,
 } from "./types";
-import { getPayment, getPaymentByOrder, indexPaymentByExpiry, listPayments, putPayment, getPaymentIdsInExpiryBucket } from "./storage";
+import { getPayment, getPaymentByOrder, acquireLock, indexPaymentByExpiry, listPayments, putPayment, releaseLock, getPaymentIdsInExpiryBucket } from "./storage";
 import { deliverNow, deliverWebhook, queueWebhook } from "./webhook";
 import { processDeadLetterQueue, processWebhookQueue } from "./queues";
 import { renderPayPage } from "./pay-page";
@@ -248,11 +248,17 @@ async function getPaymentHandler(req: Request, env: WorkerEnv, id: string): Prom
 	// Lazy expire: saat dipoll, jika sudah lewat masa berlaku, tandai expired + kirim webhook.
 	const nowSec = Math.floor(Date.now() / 1000);
 	if (payment.status === "pending" && payment.expires_at < nowSec) {
-		logger.info("payment lazy expired", { payment_id: id, order_id: payment.order_id });
-		payment.status = "expired";
-		payment.failure_reason = "Waktu pembayaran habis";
-		await putPayment(env, payment);
-		await queueWebhook(env, payment);
+		const locked = await acquireLock(env, payment.id);
+		if (!locked) {
+			logger.debug("payment lazy expire skipped: locked by another request", { payment_id: id });
+		} else {
+			logger.info("payment lazy expired", { payment_id: id, order_id: payment.order_id });
+			payment.status = "expired";
+			payment.failure_reason = "Waktu pembayaran habis";
+			await putPayment(env, payment);
+			await queueWebhook(env, payment);
+			await releaseLock(env, payment.id);
+		}
 	}
 
 	logger.debug("payment retrieved", { payment_id: id, order_id: payment.order_id, status: payment.status });
@@ -518,8 +524,29 @@ async function cronHandler(env: WorkerEnv): Promise<Response> {
 	const nowSec = Math.floor(Date.now() / 1000);
 	const nowHour = Math.floor(nowSec / 3600);
 
-	const bucketHooks: string[] = [];
+	// Primary scan: current + next 2 hours (normal operation)
+	const primaryBuckets: number[] = [];
 	for (let h = nowHour; h <= nowHour + 2; h++) {
+		primaryBuckets.push(h);
+	}
+
+	// Safety net: every 5th tick, scan 3-6 hours back
+	// Every 25th tick, scan 6-24 hours back (catches gaps from missed cron runs)
+	const tickMod = nowHour % 25;
+	const safetyBuckets: number[] = [];
+	if (tickMod === 0) {
+		for (let h = nowHour - 24; h <= nowHour - 6; h++) {
+			safetyBuckets.push(h);
+		}
+	} else if (tickMod % 5 === 0) {
+		for (let h = nowHour - 6; h <= nowHour - 3; h++) {
+			safetyBuckets.push(h);
+		}
+	}
+
+	const allBuckets = [...new Set([...primaryBuckets, ...safetyBuckets])].sort((a, b) => a - b);
+	const bucketHooks: string[] = [];
+	for (const h of allBuckets) {
 		const ids = await getPaymentIdsInExpiryBucket(env, h);
 		bucketHooks.push(...ids);
 	}
@@ -527,7 +554,7 @@ async function cronHandler(env: WorkerEnv): Promise<Response> {
 	let expired = 0;
 	let reconciled = 0;
 
-	logger.info("cron started", { scannedBuckets: bucketHooks.length, nowSec });
+	logger.info("cron started", { scannedBuckets: allBuckets.length, primaryBuckets: primaryBuckets.length, safetyBuckets: safetyBuckets.length, nowSec });
 
 	for (const paymentId of bucketHooks) {
 		const payment = await getPayment(env, paymentId);

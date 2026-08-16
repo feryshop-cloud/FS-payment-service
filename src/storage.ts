@@ -6,6 +6,8 @@ const WEBHOOK_QUEUE_KEY = (id: string) => `webhook:${id}`;
 const EXPIRY_BUCKET_KEY = (hourBucket: number, id: string) => `expiry:${hourBucket}:${id}`;
 
 const PAYMENT_TTL_SECONDS = 60 * 60 * 24 * 30; // 30 days
+const WEBHOOK_QUEUE_TTL_SECONDS = 60 * 60 * 24 * 7; // 7 days
+const LOCK_TTL_SECONDS = 5; // 5 seconds for atomic operation lock
 
 export function newId(prefix: string): string {
 	const rand = crypto.getRandomValues(new Uint8Array(8));
@@ -19,6 +21,21 @@ export function generateVirtualAccount(): string {
 	let digits = "";
 	for (const b of rand) digits += (b % 10).toString();
 	return `880${digits.slice(0, 13)}`;
+}
+
+const LOCK_KEY = (id: string) => `lock:payment:${id}`;
+
+export async function acquireLock(env: WorkerEnv, id: string): Promise<boolean> {
+	try {
+		await env.PAYMENTS.put(LOCK_KEY(id), "1");
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+export async function releaseLock(env: WorkerEnv, id: string): Promise<void> {
+	await env.PAYMENTS.delete(LOCK_KEY(id));
 }
 
 export async function getPayment(env: WorkerEnv, id: string): Promise<PaymentRecord | null> {
@@ -90,7 +107,9 @@ export async function enqueueWebhook(
 	item: Omit<WebhookQueueItem, "attempts"> & { attempts?: number },
 ): Promise<void> {
 	const full: WebhookQueueItem = { attempts: 0, ...item };
-	await env.PAYMENTS.put(WEBHOOK_QUEUE_KEY(full.id), JSON.stringify(full));
+	await env.PAYMENTS.put(WEBHOOK_QUEUE_KEY(full.id), JSON.stringify(full), {
+		expirationTtl: WEBHOOK_QUEUE_TTL_SECONDS,
+	});
 }
 
 export async function getWebhookQueueItem(
