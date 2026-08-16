@@ -109,8 +109,15 @@ export async function deliverWebhook(env: WorkerEnv, item: WebhookQueueItem): Pr
 			},
 			body,
 		});
-		return res.status >= 200 && res.status < 300;
-	} catch {
+		const ok = res.status >= 200 && res.status < 300;
+		if (ok) {
+			logger.info("webhook delivered", { id: item.id, payment_id: item.payment_id, event: item.event, status: res.status });
+		} else {
+			logger.warn("webhook delivery failed", { id: item.id, payment_id: item.payment_id, event: item.event, status: res.status });
+		}
+		return ok;
+	} catch (error) {
+		logger.warn("webhook delivery error", { id: item.id, payment_id: item.payment_id, event: item.event, error });
 		return false;
 	}
 }
@@ -122,6 +129,8 @@ export async function retryPendingWebhooks(
 	let delivered = 0;
 	let skipped = 0;
 	const maxAttempts = Math.max(1, Number(env.MAX_WEBHOOK_ATTEMPTS || 5));
+
+	logger.info("webhook retry started", { queueSize: items.length, maxAttempts });
 
 	for (const item of items) {
 		const ok = await deliverWebhook(env, item);
@@ -144,6 +153,7 @@ export async function retryPendingWebhooks(
 			skipped++;
 		}
 	}
+	logger.info("webhook retry completed", { delivered, skipped });
 	return { delivered, skipped };
 }
 
@@ -153,6 +163,7 @@ export async function deliverNow(
 	ctx: ExecutionContext,
 ): Promise<void> {
 	await queueWebhook(env, record);
+	logger.debug("webhook queued for immediate delivery", { payment_id: record.id, order_id: record.order_id, status: record.status });
 	ctx.waitUntil(
 		(async () => {
 			const queued = await listWebhookQueue(env);

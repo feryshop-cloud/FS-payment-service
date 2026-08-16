@@ -9,7 +9,7 @@ import { getPayment, getPaymentByOrder, listPayments, putPayment } from "./stora
 import { deliverNow, deliverWebhook, queueWebhook, retryPendingWebhooks } from "./webhook";
 import { renderPayPage } from "./pay-page";
 import { getActiveProvider, getProvider, normalizeProvider } from "./providers";
-import { logger } from "./utils/logger";
+import { logger, setRequestId } from "./utils/logger";
 
 const json = (data: unknown, status = 200, headers: Record<string, string> = {}) =>
 	new Response(JSON.stringify(data), {
@@ -90,7 +90,8 @@ export const corsHeaders = (env: WorkerEnv, origin = ""): Record<string, string>
 	const headers: Record<string, string> = {
 		"Access-Control-Allow-Methods": "GET,POST,OPTIONS,PATCH",
 		"Access-Control-Allow-Headers":
-			"Content-Type, Authorization, x-payment-signature, x-mock-signature, x-payment-event, x-payment-idempotency",
+			"Content-Type, Authorization, x-payment-signature, x-mock-signature, x-payment-event, x-payment-idempotency, x-request-id",
+		"Access-Control-Expose-Headers": "x-request-id",
 		"Access-Control-Max-Age": "86400",
 	};
 	if (allowed.includes("*")) {
@@ -146,6 +147,7 @@ function toResponse(record: PaymentRecord, origin: string): CreatePaymentRespons
 async function createPayment(req: Request, env: WorkerEnv): Promise<Response> {
 	const body = (await req.json().catch(() => null)) as CreatePaymentRequest | null;
 	if (!body || !body.order_id || typeof body.amount !== "number" || body.amount <= 0) {
+		logger.debug("create payment validation failed", { hasBody: !!body, hasOrderId: !!body?.order_id, amount: body?.amount });
 		return json(
 			{ success: false, message: "order_id dan amount (number > 0) wajib diisi" },
 			400,
@@ -153,6 +155,7 @@ async function createPayment(req: Request, env: WorkerEnv): Promise<Response> {
 		);
 	}
 	if (!body.callback_url || !isValidHttpUrl(body.callback_url)) {
+		logger.debug("create payment invalid callback_url", { callback_url: body.callback_url });
 		return json(
 			{ success: false, message: "callback_url wajib diisi dan harus berupa URL http(s)" },
 			400,
@@ -161,6 +164,7 @@ async function createPayment(req: Request, env: WorkerEnv): Promise<Response> {
 	}
 	const allowPrivateCallback = env.ALLOW_PRIVATE_CALLBACKS === "true";
 	if (!allowPrivateCallback && isPrivateHost(new URL(body.callback_url).hostname)) {
+		logger.warn("create payment blocked private callback", { callback_url: body.callback_url });
 		return json(
 			{ success: false, message: "callback_url menuju host pribadi (localhost/private) tidak diizinkan" },
 			400,
@@ -168,6 +172,7 @@ async function createPayment(req: Request, env: WorkerEnv): Promise<Response> {
 		);
 	}
 	if (body.return_url && !isValidHttpUrl(body.return_url)) {
+		logger.debug("create payment invalid return_url", { return_url: body.return_url });
 		return json(
 			{ success: false, message: "return_url harus berupa URL http(s)" },
 			400,
@@ -178,6 +183,7 @@ async function createPayment(req: Request, env: WorkerEnv): Promise<Response> {
 	// Idempotent: payment pending atas order yang sama → kembalikan existing.
 	const existing = await getPaymentByOrder(env, body.order_id);
 	if (existing && existing.status === "pending") {
+		logger.warn("create payment idempotent hit", { order_id: body.order_id, payment_id: existing.id });
 		const origin = getOrigin(req);
 		return json(
 			{ success: true, message: "Payment pending sudah ada", data: toResponse(existing, origin) },
@@ -189,6 +195,7 @@ async function createPayment(req: Request, env: WorkerEnv): Promise<Response> {
 
 	const provider = getActiveProvider(env);
 	if (!provider) {
+		logger.warn("create payment no active provider", { PAYMENT_PROVIDER: env.PAYMENT_PROVIDER });
 		return json(
 			{ success: false, message: "Tidak ada payment provider aktif (PAYMENT_PROVIDER kosong)" },
 			400,
@@ -203,6 +210,7 @@ async function createPayment(req: Request, env: WorkerEnv): Promise<Response> {
 		logger.error("provider create failed", { provider: provider.id, error: e });
 	}
 	if (!record) {
+		logger.error("provider create returned null", { provider: provider.id, order_id: body.order_id });
 		return json(
 			{
 				success: false,
@@ -214,6 +222,7 @@ async function createPayment(req: Request, env: WorkerEnv): Promise<Response> {
 	}
 
 	await putPayment(env, record);
+	logger.info("payment intent created", { payment_id: record.id, order_id: record.order_id, provider: record.provider, amount: record.amount, expires_at: record.expires_at });
 
 	const origin = getOrigin(req);
 	return json(
@@ -229,18 +238,22 @@ function publicPayment(payment: PaymentRecord, origin: string) {
 
 async function getPaymentHandler(req: Request, env: WorkerEnv, id: string): Promise<Response> {
 	let payment = await getPayment(env, id);
-	if (!payment)
+	if (!payment) {
+		logger.debug("payment not found", { payment_id: id });
 		return json({ success: false, message: "Payment tidak ditemukan" }, 404, corsHeaders(env));
+	}
 
 	// Lazy expire: saat dipoll, jika sudah lewat masa berlaku, tandai expired + kirim webhook.
 	const nowSec = Math.floor(Date.now() / 1000);
 	if (payment.status === "pending" && payment.expires_at < nowSec) {
+		logger.info("payment lazy expired", { payment_id: id, order_id: payment.order_id });
 		payment.status = "expired";
 		payment.failure_reason = "Waktu pembayaran habis";
 		await putPayment(env, payment);
 		await queueWebhook(env, payment);
 	}
 
+	logger.debug("payment retrieved", { payment_id: id, order_id: payment.order_id, status: payment.status });
 	const origin = getOrigin(req);
 	return json({ success: true, data: publicPayment(payment, origin) }, 200, corsHeaders(env));
 }
@@ -253,11 +266,14 @@ async function payOrFail(
 	ctx: ExecutionContext,
 ): Promise<Response> {
 	const payment = await getPayment(env, id);
-	if (!payment)
+	if (!payment) {
+		logger.debug("sandbox action payment not found", { payment_id: id, action });
 		return json({ success: false, message: "Payment tidak ditemukan" }, 404, corsHeaders(env));
+	}
 
 	// Aksi sandbox: hanya untuk payment mock (simulasi dev). Provider produksi ditolak.
 	if (payment.provider !== "mock") {
+		logger.warn("sandbox action blocked non-mock provider", { payment_id: id, provider: payment.provider, action });
 		return json(
 			{ success: false, message: "Aksi sandbox hanya berlaku untuk provider mock" },
 			403,
@@ -265,11 +281,13 @@ async function payOrFail(
 		);
 	}
 	if (!adminTokenOk(env, req)) {
+		logger.warn("sandbox action unauthorized", { payment_id: id, action });
 		return json({ success: false, message: "Akses sandbox ditolak" }, 403, corsHeaders(env));
 	}
 
 	const nowSec = Math.floor(Date.now() / 1000);
 	if (payment.status !== "pending") {
+		logger.info("sandbox action skipped already processed", { payment_id: id, status: payment.status, action });
 		return json(
 			{
 				success: true,
@@ -281,6 +299,7 @@ async function payOrFail(
 		);
 	}
 	if (payment.expires_at < nowSec) {
+		logger.warn("sandbox action skipped expired", { payment_id: id, action });
 		payment.status = "expired";
 		payment.failure_reason = "Waktu pembayaran habis";
 		await putPayment(env, payment);
@@ -306,6 +325,7 @@ async function payOrFail(
 
 	await putPayment(env, payment);
 	await deliverNow(env, payment, ctx);
+	logger.info("sandbox action completed", { payment_id: id, action, status: payment.status });
 
 	const message =
 		action === "pay" ? "Pembayaran berhasil disimulasikan" : "Pembayaran ditandai gagal (simulasi)";
@@ -324,14 +344,18 @@ async function simulatePayment(
 	ctx: ExecutionContext,
 ): Promise<Response> {
 	const payment = await getPayment(env, id);
-	if (!payment)
+	if (!payment) {
+		logger.debug("simulate payment not found", { payment_id: id });
 		return json({ success: false, message: "Payment tidak ditemukan" }, 404, corsHeaders(env));
+	}
 
 	if (!adminTokenOk(env, req)) {
+		logger.warn("simulate unauthorized", { payment_id: id });
 		return json({ success: false, message: "Akses sandbox ditolak" }, 403, corsHeaders(env));
 	}
 
 	if (payment.status !== "pending") {
+		logger.info("simulate skipped already processed", { payment_id: id, status: payment.status });
 		return json(
 			{
 				success: true,
@@ -345,6 +369,7 @@ async function simulatePayment(
 
 	const provider = getProvider(payment.provider as PaymentProviderId);
 	if (!provider.simulate) {
+		logger.warn("simulate unsupported provider", { payment_id: id, provider: payment.provider });
 		return json(
 			{ success: false, message: "Simulate tidak didukung provider ini" },
 			400,
@@ -359,6 +384,7 @@ async function simulatePayment(
 		logger.error("simulate failed", { provider: provider.id, error: e });
 	}
 	if (!updated) {
+		logger.error("simulate returned null", { payment_id: id, provider: payment.provider });
 		return json(
 			{ success: false, message: "Simulasi gagal (cek sandbox/config provider)" },
 			502,
@@ -368,6 +394,7 @@ async function simulatePayment(
 
 	await putPayment(env, updated);
 	await deliverNow(env, updated, ctx);
+	logger.info("payment simulated", { payment_id: id, status: updated.status, provider: updated.provider });
 
 	return json(
 		{
@@ -393,28 +420,36 @@ async function providerWebhook(
 	providerId: PaymentProviderId,
 ): Promise<Response> {
 	const rawBody = await req.text();
+	logger.debug("provider webhook received", { provider: providerId, bodyLength: rawBody.length });
 
 	const provider = getProvider(providerId);
 	if (!provider.verifyWebhook) {
+		logger.warn("provider webhook no verifier", { provider: providerId });
 		return json({ success: true, received: true, verified: false }, 200); // ack, jangan retry
 	}
 
 	const result = await provider.verifyWebhook(env, rawBody, req.headers);
 
 	if (!result.ok || !result.order_id) {
+		logger.warn("provider webhook verification failed", { provider: providerId, ok: result.ok });
 		return json({ success: true, received: true, verified: false }, 200); // ack, jangan retry
 	}
 
+	logger.debug("provider webhook verified", { provider: providerId, order_id: result.order_id, status: result.status });
+
 	const payment = await getPaymentByOrder(env, result.order_id);
 	if (!payment) {
+		logger.warn("provider webhook unknown order", { provider: providerId, order_id: result.order_id });
 		return json({ success: true, received: true, verified: true, message: "order unknown" }, 200);
 	}
 
 	// Idempotent: jangan menimpa status final.
 	if (payment.status !== "pending") {
+		logger.debug("provider webhook deduplicated", { payment_id: payment.id, status: payment.status });
 		return json({ success: true, received: true, deduplicated: true }, 200);
 	}
 
+	const prevStatus = payment.status;
 	if (result.status === "paid") {
 		payment.status = "paid";
 		payment.paid_at = result.paid_at || new Date().toISOString();
@@ -432,6 +467,7 @@ async function providerWebhook(
 
 	await putPayment(env, payment);
 	if (payment.status !== "pending") {
+		logger.info("provider webhook status changed", { payment_id: payment.id, order_id: payment.order_id, prevStatus, nextStatus: payment.status, provider: providerId });
 		await deliverNow(env, payment, ctx);
 	}
 
@@ -441,11 +477,13 @@ async function providerWebhook(
 async function payPage(req: Request, env: WorkerEnv, id: string): Promise<Response> {
 	const payment = await getPayment(env, id);
 	if (!payment) {
+		logger.debug("pay page not found", { payment_id: id });
 		return new Response("Payment tidak ditemukan", {
 			status: 404,
 			headers: { "Content-Type": "text/plain" },
 		});
 	}
+	logger.debug("pay page served", { payment_id: id, status: payment.status });
 	const origin = getOrigin(req);
 	return new Response(renderPayPage(payment, origin), {
 		status: 200,
@@ -454,6 +492,7 @@ async function payPage(req: Request, env: WorkerEnv, id: string): Promise<Respon
 }
 
 async function adminList(env: WorkerEnv): Promise<Response> {
+	logger.info("admin list accessed");
 	const payments = await listPayments(env);
 	const rows = payments
 		.map((p) => ({
@@ -480,8 +519,11 @@ async function cronHandler(env: WorkerEnv): Promise<Response> {
 	let reconciled = 0;
 	let webhookResult = { delivered: 0, skipped: 0 };
 
+	logger.info("cron started", { totalPayments: payments.length, nowSec });
+
 	for (const payment of payments) {
 		if (payment.status === "pending" && payment.expires_at < nowSec) {
+			logger.debug("cron expiring payment", { payment_id: payment.id, order_id: payment.order_id });
 			payment.status = "expired";
 			payment.failure_reason = "Waktu pembayaran habis";
 			await putPayment(env, payment);
@@ -509,25 +551,33 @@ async function cronHandler(env: WorkerEnv): Promise<Response> {
 	}
 
 	webhookResult = await retryPendingWebhooks(env);
+	logger.info("cron completed", { expired, reconciled, webhookDelivered: webhookResult.delivered, webhookSkipped: webhookResult.skipped });
 	return json({ success: true, expired, reconciled, webhookResult }, 200);
 }
 
 async function handleFetch(req: Request, env: WorkerEnv, ctx: ExecutionContext): Promise<Response> {
 	const url = new URL(req.url);
 	const path = url.pathname;
+	const requestId = req.headers.get("x-request-id") || undefined;
+	setRequestId(requestId);
 
 	if (req.method === "OPTIONS") {
-		return new Response(null, { status: 204, headers: corsHeaders(env, reqOrigin(req)) });
+		const res = new Response(null, { status: 204, headers: corsHeaders(env, reqOrigin(req)) });
+		if (requestId) res.headers.set("x-request-id", requestId);
+		return res;
 	}
 
 	const withCors = <T extends Response>(res: T): T => {
 		for (const [key, value] of Object.entries(corsHeaders(env, reqOrigin(req)))) {
 			res.headers.set(key, value);
 		}
+		if (requestId) res.headers.set("x-request-id", requestId);
 		return res;
 	};
 
 	try {
+		logger.info("request received", { method: req.method, path });
+
 		if (req.method === "GET" && path === "/health") {
 			const provider = normalizeProvider(env);
 			return withCors(
