@@ -112,6 +112,8 @@ export interface ProviderWebhookResult {
 
 export interface WorkerEnv {
 	PAYMENTS: KVNamespace;
+	WEBHOOK_DELIVERY_QUEUE?: Queue;
+	WEBHOOK_DELIVERY_DLQ?: Queue;
 	// Provider aktif: "mock" | "pakasir" | "sumopod"
 	PAYMENT_PROVIDER?: string;
 	// Secret webhook (FS-Public side) — kompat mundur dengan nama lama.

@@ -3,6 +3,9 @@ import type { WorkerEnv, PaymentRecord, WebhookQueueItem } from "./types";
 const PAYMENT_KEY = (id: string) => `payment:${id}`;
 const PAYMENT_BY_ORDER = (orderId: string) => `order:${orderId}`;
 const WEBHOOK_QUEUE_KEY = (id: string) => `webhook:${id}`;
+const EXPIRY_BUCKET_KEY = (hourBucket: number, id: string) => `expiry:${hourBucket}:${id}`;
+
+const PAYMENT_TTL_SECONDS = 60 * 60 * 24 * 30; // 30 days
 
 export function newId(prefix: string): string {
 	const rand = crypto.getRandomValues(new Uint8Array(8));
@@ -25,8 +28,9 @@ export async function getPayment(env: WorkerEnv, id: string): Promise<PaymentRec
 }
 
 export async function putPayment(env: WorkerEnv, record: PaymentRecord): Promise<void> {
-	await env.PAYMENTS.put(PAYMENT_KEY(record.id), JSON.stringify(record));
-	await env.PAYMENTS.put(PAYMENT_BY_ORDER(record.order_id), record.id);
+	const paymentOptions: KVNamespacePutOptions = { expirationTtl: PAYMENT_TTL_SECONDS };
+	await env.PAYMENTS.put(PAYMENT_KEY(record.id), JSON.stringify(record), paymentOptions);
+	await env.PAYMENTS.put(PAYMENT_BY_ORDER(record.order_id), record.id, paymentOptions);
 }
 
 export async function getPaymentByOrder(
@@ -49,6 +53,32 @@ export async function listPayments(env: WorkerEnv): Promise<PaymentRecord[]> {
 		for (const key of page.keys) {
 			const raw = await env.PAYMENTS.get(key.name);
 			if (raw) out.push(JSON.parse(raw) as PaymentRecord);
+		}
+		cursor = page.list_complete === false ? page.cursor : null;
+	} while (cursor);
+	return out;
+}
+
+export async function indexPaymentByExpiry(env: WorkerEnv, record: PaymentRecord): Promise<void> {
+	const hourBucket = Math.floor(record.expires_at / 3600);
+	const options: KVNamespacePutOptions = { expirationTtl: PAYMENT_TTL_SECONDS };
+	await env.PAYMENTS.put(EXPIRY_BUCKET_KEY(hourBucket, record.id), record.id, options);
+}
+
+export async function getPaymentIdsInExpiryBucket(
+	env: WorkerEnv,
+	hourBucket: number,
+): Promise<string[]> {
+	const out: string[] = [];
+	let cursor: string | null = null;
+	do {
+		const page: KVNamespaceListResult<unknown> = await env.PAYMENTS.list({
+			prefix: `expiry:${hourBucket}:`,
+			cursor: cursor ?? undefined,
+		});
+		for (const key of page.keys) {
+			const parts = key.name.split(":");
+			if (parts.length === 3) out.push(parts[2]);
 		}
 		cursor = page.list_complete === false ? page.cursor : null;
 	} while (cursor);

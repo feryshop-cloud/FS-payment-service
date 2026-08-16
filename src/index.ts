@@ -5,8 +5,9 @@ import type {
 	PaymentProviderId,
 	WorkerEnv,
 } from "./types";
-import { getPayment, getPaymentByOrder, listPayments, putPayment } from "./storage";
-import { deliverNow, deliverWebhook, queueWebhook, retryPendingWebhooks } from "./webhook";
+import { getPayment, getPaymentByOrder, indexPaymentByExpiry, listPayments, putPayment, getPaymentIdsInExpiryBucket } from "./storage";
+import { deliverNow, deliverWebhook, queueWebhook } from "./webhook";
+import { processDeadLetterQueue, processWebhookQueue } from "./queues";
 import { renderPayPage } from "./pay-page";
 import { getActiveProvider, getProvider, normalizeProvider } from "./providers";
 import { logger, setRequestId } from "./utils/logger";
@@ -222,6 +223,7 @@ async function createPayment(req: Request, env: WorkerEnv): Promise<Response> {
 	}
 
 	await putPayment(env, record);
+	await indexPaymentByExpiry(env, record);
 	logger.info("payment intent created", { payment_id: record.id, order_id: record.order_id, provider: record.provider, amount: record.amount, expires_at: record.expires_at });
 
 	const origin = getOrigin(req);
@@ -514,14 +516,23 @@ async function adminList(env: WorkerEnv): Promise<Response> {
 
 async function cronHandler(env: WorkerEnv): Promise<Response> {
 	const nowSec = Math.floor(Date.now() / 1000);
-	const payments = await listPayments(env);
+	const nowHour = Math.floor(nowSec / 3600);
+
+	const bucketHooks: string[] = [];
+	for (let h = nowHour; h <= nowHour + 2; h++) {
+		const ids = await getPaymentIdsInExpiryBucket(env, h);
+		bucketHooks.push(...ids);
+	}
+
 	let expired = 0;
 	let reconciled = 0;
-	let webhookResult = { delivered: 0, skipped: 0 };
 
-	logger.info("cron started", { totalPayments: payments.length, nowSec });
+	logger.info("cron started", { scannedBuckets: bucketHooks.length, nowSec });
 
-	for (const payment of payments) {
+	for (const paymentId of bucketHooks) {
+		const payment = await getPayment(env, paymentId);
+		if (!payment) continue;
+
 		if (payment.status === "pending" && payment.expires_at < nowSec) {
 			logger.debug("cron expiring payment", { payment_id: payment.id, order_id: payment.order_id });
 			payment.status = "expired";
@@ -550,9 +561,8 @@ async function cronHandler(env: WorkerEnv): Promise<Response> {
 		}
 	}
 
-	webhookResult = await retryPendingWebhooks(env);
-	logger.info("cron completed", { expired, reconciled, webhookDelivered: webhookResult.delivered, webhookSkipped: webhookResult.skipped });
-	return json({ success: true, expired, reconciled, webhookResult }, 200);
+	logger.info("cron completed", { expired, reconciled });
+	return json({ success: true, expired, reconciled }, 200);
 }
 
 async function handleFetch(req: Request, env: WorkerEnv, ctx: ExecutionContext): Promise<Response> {
@@ -646,5 +656,15 @@ export default {
 	},
 	async fetch(request: Request, env: WorkerEnv, ctx: ExecutionContext): Promise<Response> {
 		return handleFetch(request, env, ctx);
+	},
+	async queue(batch: MessageBatch<unknown>, env: WorkerEnv, ctx: ExecutionContext): Promise<void> {
+		const queueName = typeof (batch as any).queue === "string" ? (batch as any).queue : "";
+		if (queueName === "webhook-delivery") {
+			await processWebhookQueue(batch as MessageBatch<import("./types").WebhookQueueItem>, env);
+		} else if (queueName === "webhook-delivery-dlq") {
+			await processDeadLetterQueue(batch as MessageBatch<import("./types").WebhookQueueItem>, env);
+		} else {
+			logger.warn("unknown queue received", { queueName });
+		}
 	},
 } satisfies ExportedHandler<WorkerEnv>;

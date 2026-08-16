@@ -14,8 +14,26 @@
 			"preview_id": "a70cdc5e7eb64495ab1197b579545a97"
 		}
 	],
+	"queues": {
+		"producers": [
+			{ "binding": "WEBHOOK_DELIVERY_QUEUE", "queue": "webhook-delivery" }
+		],
+		"consumers": [
+			{
+				"queue": "webhook-delivery",
+				"max_batch_size": 10,
+				"max_batch_timeout": 5,
+				"max_retries": 5,
+				"dead_letter_queue": "webhook-delivery-dlq"
+			},
+			{
+				"queue": "webhook-delivery-dlq",
+				"max_batch_size": 10
+			}
+		]
+	},
 	"triggers": {
-		"crons": ["* * * * *"]
+		"crons": ["*/5 * * * *"]
 	},
 	"vars": {
 		"DEFAULT_EXPIRES_IN_SECONDS": "300",

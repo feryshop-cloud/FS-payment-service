@@ -84,7 +84,13 @@ export async function queueWebhook(env: WorkerEnv, record: PaymentRecord): Promi
 		payload,
 		queued_at: new Date().toISOString(),
 	};
+
 	await enqueueWebhook(env, item);
+
+	if (env.WEBHOOK_DELIVERY_QUEUE) {
+		await env.WEBHOOK_DELIVERY_QUEUE.send(item);
+		logger.debug("webhook sent to queue", { payment_id: record.id, event: payload.event });
+	}
 }
 
 export async function deliverWebhook(env: WorkerEnv, item: WebhookQueueItem): Promise<boolean> {
@@ -163,7 +169,6 @@ export async function deliverNow(
 	ctx: ExecutionContext,
 ): Promise<void> {
 	await queueWebhook(env, record);
-	logger.debug("webhook queued for immediate delivery", { payment_id: record.id, order_id: record.order_id, status: record.status });
 	ctx.waitUntil(
 		(async () => {
 			const queued = await listWebhookQueue(env);
