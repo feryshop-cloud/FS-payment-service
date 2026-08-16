@@ -30,6 +30,7 @@ Status payment: `pending` → `paid` | `failed` | `expired`.
 | --------- | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------ |
 | `mock`    | —                                    | VA fiktif, page simulasi di worker. `payment_url` diisi `/p/{id}`                                                              |
 | `pakasir` | `PAKASIR_PROJECT`, `PAKASIR_API_KEY` | QRIS/VA asli via API. `qr_string` (QRIS) / `payment_code` (VA), `total_payment` = amount + fee. Tanpa `payment_url` (API mode) |
+| `sumopod` | `SUMODOP_API_KEY`                     | Hosted page, redirect customer ke `payment_url`. Webhook diverifikasi `X-Webhook-Token` atau Svix signature.                    |
 
 Response create (normalisasi, dipakai langsung FS-Public):
 `payment_id`, `order_id`, `provider`, `status`, `amount`, `currency`, `payment_code`, `payment_code_display`, `qr_string`, `total_payment`, `fee`, `payment_method`, `payment_url`, `expires_at`, `created_at`, `paid_at`.
