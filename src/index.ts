@@ -20,6 +20,30 @@ const json = (data: unknown, status = 200, headers: Record<string, string> = {})
 		},
 	});
 
+function safeEqual(a: string, b: string): boolean {
+	if (a.length !== b.length) return false;
+	let diff = 0;
+	for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+	return diff === 0;
+}
+
+/** Aksi sandbox (/pay, /fail, /simulate) hanya boleh saat token admin disediakan (jika dikonfigurasi). */
+function adminTokenOk(env: WorkerEnv, req: Request): boolean {
+	const token = env.SANDBOX_ADMIN_TOKEN;
+	if (!token) return true; // dev mode tanpa token → terbuka (mock only).
+	const provided = req.headers.get("x-payment-admin-token") || "";
+	return safeEqual(provided, token);
+}
+
+function isValidHttpUrl(value: string): boolean {
+	try {
+		const url = new URL(value);
+		return url.protocol === "http:" || url.protocol === "https:";
+	} catch {
+		return false;
+	}
+}
+
 const corsHeaders = (env: WorkerEnv): Record<string, string> => {
 	const allowed = (env.ALLOWED_ORIGINS || "*")
 		.split(",")
@@ -81,9 +105,16 @@ async function createPayment(req: Request, env: WorkerEnv): Promise<Response> {
 			corsHeaders(env),
 		);
 	}
-	if (!body.callback_url) {
+	if (!body.callback_url || !isValidHttpUrl(body.callback_url)) {
 		return json(
-			{ success: false, message: "callback_url wajib diisi untuk menerima webhook" },
+			{ success: false, message: "callback_url wajib diisi dan harus berupa URL http(s)" },
+			400,
+			corsHeaders(env),
+		);
+	}
+	if (body.return_url && !isValidHttpUrl(body.return_url)) {
+		return json(
+			{ success: false, message: "return_url harus berupa URL http(s)" },
 			400,
 			corsHeaders(env),
 		);
@@ -170,6 +201,18 @@ async function payOrFail(
 	if (!payment)
 		return json({ success: false, message: "Payment tidak ditemukan" }, 404, corsHeaders(env));
 
+	// Aksi sandbox: hanya untuk payment mock (simulasi dev). Provider produksi ditolak.
+	if (payment.provider !== "mock") {
+		return json(
+			{ success: false, message: "Aksi sandbox hanya berlaku untuk provider mock" },
+			403,
+			corsHeaders(env),
+		);
+	}
+	if (!adminTokenOk(env, req)) {
+		return json({ success: false, message: "Akses sandbox ditolak" }, 403, corsHeaders(env));
+	}
+
 	const nowSec = Math.floor(Date.now() / 1000);
 	if (payment.status !== "pending") {
 		return json(
@@ -228,6 +271,10 @@ async function simulatePayment(
 	const payment = await getPayment(env, id);
 	if (!payment)
 		return json({ success: false, message: "Payment tidak ditemukan" }, 404, corsHeaders(env));
+
+	if (!adminTokenOk(env, req)) {
+		return json({ success: false, message: "Akses sandbox ditolak" }, 403, corsHeaders(env));
+	}
 
 	if (payment.status !== "pending") {
 		return json(

@@ -17,6 +17,15 @@ function formatRupiah(amount: number): string {
 	}).format(amount);
 }
 
+/** JSON string yang aman disisipkan ke blok <script> (cegah breakout `</script>`). */
+function jsString(value: unknown): string {
+	return JSON.stringify(value)
+		.replace(/</g, "\\u003c")
+		.replace(/>/g, "\\u003e")
+		.replace(/\u2028/g, "\\u2028")
+		.replace(/\u2029/g, "\\u2029");
+}
+
 export function renderPayPage(record: PaymentRecord, origin: string): string {
 	const expiresMs = record.expires_at;
 	const statusLabel: Record<string, string> = {
@@ -112,11 +121,11 @@ export function renderPayPage(record: PaymentRecord, origin: string): string {
 </div>
 <script>
 (function () {
-  var paymentId = ${JSON.stringify(record.id)};
-  var api = ${JSON.stringify(origin)};
-  var returnUrl = ${JSON.stringify(record.return_url || null)};
+  var paymentId = ${jsString(record.id)};
+  var api = ${jsString(origin)};
+  var returnUrl = ${jsString(record.return_url || null)};
   var expiresAt = ${record.expires_at};
-  var currentStatus = ${JSON.stringify(record.status)};
+  var currentStatus = ${jsString(record.status)};
   var btnPay = document.getElementById("btnPay");
   var btnFail = document.getElementById("btnFail");
   var statusEl = document.getElementById("status");

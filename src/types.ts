@@ -120,6 +120,8 @@ export interface WorkerEnv {
 	DEFAULT_EXPIRES_IN_SECONDS?: string;
 	MAX_WEBHOOK_ATTEMPTS?: string;
 	ALLOWED_ORIGINS?: string;
+	// Token admin untuk aksi sandbox (/pay /fail /simulate). Kosong = hanya mock/dev.
+	SANDBOX_ADMIN_TOKEN?: string;
 	// Pakasir
 	PAKASIR_PROJECT?: string;
 	PAKASIR_API_KEY?: string;

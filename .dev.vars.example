@@ -2,6 +2,11 @@
 # Harus sama dengan PAYMENT_WEBHOOK_SECRET di FS-Public .env.local
 PAYMENT_WEBHOOK_SECRET=dev-sandbox-secret-change-me
 
+# Token admin untuk aksi sandbox (/v1/payments/:id/pay|fail|simulate).
+# Kosong = hanya provider mock yang boleh pakai (dev). Set di produksi untuk fail-closed.
+# Kirim lewat header: X-Payment-Admin-Token: <token>
+# SANDBOX_ADMIN_TOKEN=
+
 # Pakasir (dipakai saat PAYMENT_PROVIDER=pakasir)
 # Buat Proyek di https://app.pakasir.com, salin Slug & Api Key.
 PAKASIR_PROJECT=

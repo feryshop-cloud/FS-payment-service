@@ -24,7 +24,11 @@ async function svixSignature(
 		key,
 		new TextEncoder().encode(`${svixId}.${ts}.${body}`),
 	);
-	return btoa(Array.from(new Uint8Array(sig)).map((b) => String.fromCharCode(b)).join(""));
+	return btoa(
+		Array.from(new Uint8Array(sig))
+			.map((b) => String.fromCharCode(b))
+			.join(""),
+	);
 }
 
 async function createPayment(overrides: Record<string, unknown> = {}) {
@@ -430,20 +434,23 @@ describe("sumopod provider", () => {
 
 	it("simulate tidak didukung sumopod -> 400", async () => {
 		const { putPayment } = await import("../src/storage");
-		await putPayment(env as WorkerEnv, {
-			id: "sm_simtest",
-			order_id: "TSON-SIM",
-			provider: "sumopod",
-			amount: 50000,
-			currency: "IDR",
-			payment_code: "",
-			status: "pending",
-			created_at: new Date().toISOString(),
-			expires_at: Math.floor(Date.now() / 1000) + 300,
-			callback_url: CB_URL,
-			webhook_delivered: false,
-			webhook_attempts: 0,
-		} as never);
+		await putPayment(
+			env as WorkerEnv,
+			{
+				id: "sm_simtest",
+				order_id: "TSON-SIM",
+				provider: "sumopod",
+				amount: 50000,
+				currency: "IDR",
+				payment_code: "",
+				status: "pending",
+				created_at: new Date().toISOString(),
+				expires_at: Math.floor(Date.now() / 1000) + 300,
+				callback_url: CB_URL,
+				webhook_delivered: false,
+				webhook_attempts: 0,
+			} as never,
+		);
 
 		const res = await SELF.fetch("https://example.com/v1/payments/sm_simtest/simulate", {
 			method: "POST",
@@ -531,6 +538,76 @@ describe("polling & simulasi", () => {
 		const queue = await listWebhookQueue(env as WorkerEnv);
 		const paidEvents = queue.filter((q) => q.payment_id === payId && q.event === "payment.paid");
 		expect(paidEvents.length).toBeLessThanOrEqual(1);
+	});
+});
+
+describe("sandbox action & URL validation", () => {
+	it("pay action pada payment non-mock -> 403", async () => {
+		const { putPayment } = await import("../src/storage");
+		await putPayment(
+			env as WorkerEnv,
+			{
+				id: "sm_guard",
+				order_id: "TSON-GUARD",
+				provider: "sumopod",
+				amount: 10000,
+				currency: "IDR",
+				payment_code: "",
+				status: "pending",
+				created_at: new Date().toISOString(),
+				expires_at: Math.floor(Date.now() / 1000) + 300,
+				callback_url: CB_URL,
+				webhook_delivered: false,
+				webhook_attempts: 0,
+			} as never,
+		);
+
+		const res = await SELF.fetch("https://example.com/v1/payments/sm_guard/pay", {
+			method: "POST",
+		});
+		expect(res.status).toBe(403);
+
+		const fail = await SELF.fetch("https://example.com/v1/payments/sm_guard/fail", {
+			method: "POST",
+		});
+		expect(fail.status).toBe(403);
+	});
+
+	it("create menolak callback_url non-http(s)", async () => {
+		const res = await SELF.fetch("https://example.com/v1/payments", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({
+				order_id: "TSON-CB",
+				amount: 1000,
+				callback_url: "ftp://example.com/hook",
+			}),
+		});
+		expect(res.status).toBe(400);
+	});
+
+	it("create menolak return_url javascript:", async () => {
+		const res = await SELF.fetch("https://example.com/v1/payments", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({
+				order_id: "TSON-RET",
+				amount: 1000,
+				callback_url: CB_URL,
+				return_url: "javascript:alert(1)",
+			}),
+		});
+		expect(res.status).toBe(400);
+	});
+
+	it("pay page meng-escape return_url dari breakout script", async () => {
+		const { json } = await createPayment({
+			return_url: "https://x.com/</script><script>alert(1)</script>",
+		});
+		const res = await SELF.fetch(`https://example.com/p/${json.data.payment_id}`);
+		const html = await res.text();
+		expect(html).not.toContain("</script><script>alert(1)");
+		expect(html).toContain("\\u003c/script\\u003e");
 	});
 });
 

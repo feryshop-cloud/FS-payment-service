@@ -9,9 +9,7 @@ import type { PaymentProvider } from "./index";
 import { logger } from "../utils/logger";
 
 function baseUrl(env: WorkerEnv): string {
-	return (
-		env.SUMODOP_BASE_URL || "https://api-pay-sandbox.sumopod.com/api/v1"
-	).replace(/\/+$/, "");
+	return (env.SUMODOP_BASE_URL || "https://api-pay-sandbox.sumopod.com/api/v1").replace(/\/+$/, "");
 }
 
 function method(env: WorkerEnv): string {
@@ -72,9 +70,7 @@ async function verifySvix(secret: string, headers: Headers, rawBody: string): Pr
 	if (!Number.isFinite(ts)) return false;
 	if (Math.abs(Date.now() / 1000 - ts) > 300) return false;
 
-	const secretBytes = Uint8Array.from(atob(secret.replace(/^whsec_/, "")), (c) =>
-		c.charCodeAt(0),
-	);
+	const secretBytes = Uint8Array.from(atob(secret.replace(/^whsec_/, "")), (c) => c.charCodeAt(0));
 	const signedContent = `${svixId}.${svixTimestamp}.${rawBody}`;
 	const key = await crypto.subtle.importKey(
 		"raw",
@@ -136,6 +132,7 @@ export const SumodopProvider: PaymentProvider = {
 			currency: req.currency || "IDR",
 			expires_in_hours: expiresInHours(req),
 			success_return_url: req.return_url || undefined,
+			cancel_return_url: req.return_url || undefined,
 			payment_method_type_code: m,
 		});
 
@@ -174,7 +171,11 @@ export const SumodopProvider: PaymentProvider = {
 		return record;
 	},
 
-	async verifyWebhook(env: WorkerEnv, rawBody: string, headers: Headers): Promise<ProviderWebhookResult> {
+	async verifyWebhook(
+		env: WorkerEnv,
+		rawBody: string,
+		headers: Headers,
+	): Promise<ProviderWebhookResult> {
 		if (!env.SUMODOP_API_KEY) {
 			return { ok: false, reason: "sumopod not configured" };
 		}
