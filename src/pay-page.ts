@@ -18,7 +18,7 @@ function formatRupiah(amount: number): string {
 }
 
 /** JSON string yang aman disisipkan ke blok <script> (cegah breakout `</script>`). */
-function jsString(value: unknown): string {
+export function jsString(value: unknown): string {
 	return JSON.stringify(value)
 		.replace(/</g, "\\u003c")
 		.replace(/>/g, "\\u003e")
