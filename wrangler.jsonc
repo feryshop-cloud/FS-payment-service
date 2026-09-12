@@ -1,56 +1,62 @@
 {
-	"name": "payment-service",
-	"main": "src/index.ts",
-	"compatibility_date": "2026-08-05",
-	"compatibility_flags": [
-		"nodejs_compat"
-	],
-	"observability": {
-		"enabled": true,
-		"head_sampling_rate": 1
-	},
-	"kv_namespaces": [
-		{
-			"binding": "PAYMENTS",
-			"id": "a70cdc5e7eb64495ab1197b579545a97",
-			"preview_id": "a70cdc5e7eb64495ab1197b579545a97"
-		}
-	],
-	"queues": {
-		"producers": [
-			{
-				"binding": "WEBHOOK_DELIVERY_QUEUE",
-				"queue": "webhook-delivery"
-			}
-		],
-		"consumers": [
-			{
-				"queue": "webhook-delivery",
-				"max_batch_size": 10,
-				"max_batch_timeout": 5,
-				"max_retries": 5,
-				"dead_letter_queue": "webhook-delivery-dlq"
-			},
-			{
-				"queue": "webhook-delivery-dlq",
-				"max_batch_size": 10
-			}
-		]
-	},
-	"triggers": {
-		"crons": [
-			"*/5 * * * *"
-		]
-	},
-	"vars": {
-		"DEFAULT_EXPIRES_IN_SECONDS": "300",
-		"MAX_WEBHOOK_ATTEMPTS": "5",
-		"PAYMENT_PROVIDER": "sumopod",
-		"PAKASIR_METHOD": "qris",
-		"PAKASIR_SANDBOX": "true",
-		"PAKASIR_BASE_URL": "https://app.pakasir.com",
-		"SUMODOP_METHOD": "QRIS",
-		"SUMODOP_SANDBOX": "true",
-		"SUMODOP_BASE_URL": "https://api-pay-sandbox.sumopod.com/api/v1"
-	}
+  "name": "payment-service",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-05",
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  },
+  "kv_namespaces": [
+    {
+      "binding": "PAYMENTS",
+      "id": "a70cdc5e7eb64495ab1197b579545a97",
+      "preview_id": "a70cdc5e7eb64495ab1197b579545a97"
+    }
+  ],
+  "queues": {
+    "producers": [
+      {
+        "binding": "WEBHOOK_DELIVERY_QUEUE",
+        "queue": "webhook-delivery"
+      }
+    ],
+    "consumers": [
+      {
+        "queue": "webhook-delivery",
+        "max_batch_size": 10,
+        "max_batch_timeout": 5,
+        "max_retries": 5,
+        "dead_letter_queue": "webhook-delivery-dlq"
+      },
+      {
+        "queue": "webhook-delivery-dlq",
+        "max_batch_size": 10
+      }
+    ]
+  },
+  "triggers": {
+    "crons": [
+      "*/5 * * * *"
+    ]
+  },
+  "vars": {
+    "DEFAULT_EXPIRES_IN_SECONDS": "300",
+    "MAX_WEBHOOK_ATTEMPTS": "5",
+    "PAYMENT_PROVIDER": "sumopod",
+    "PAKASIR_METHOD": "qris",
+    "PAKASIR_SANDBOX": "true",
+    "PAKASIR_BASE_URL": "https://app.pakasir.com",
+    "SUMODOP_METHOD": "QRIS",
+    "SUMODOP_SANDBOX": "true",
+    "SUMODOP_BASE_URL": "https://api-pay-sandbox.sumopod.com/api/v1"
+  },
+  "routes": [
+    {
+      "pattern": "payment.feryshop.com",
+      "custom_domain": true
+    }
+  ]
 }
