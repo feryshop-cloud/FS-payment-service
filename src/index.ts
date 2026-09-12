@@ -5,7 +5,16 @@ import type {
 	PaymentProviderId,
 	WorkerEnv,
 } from "./types";
-import { getPayment, getPaymentByOrder, acquireLock, indexPaymentByExpiry, listPayments, putPayment, releaseLock, getPaymentIdsInExpiryBucket } from "./storage";
+import {
+	getPayment,
+	getPaymentByOrder,
+	acquireLock,
+	indexPaymentByExpiry,
+	listPayments,
+	putPayment,
+	releaseLock,
+	getPaymentIdsInExpiryBucket,
+} from "./storage";
 import { deliverNow, deliverWebhook, queueWebhook } from "./webhook";
 import { processDeadLetterQueue, processWebhookQueue } from "./queues";
 import { renderPayPage } from "./pay-page";
@@ -129,7 +138,7 @@ function toResponse(record: PaymentRecord, origin: string): CreatePaymentRespons
 		payment_method: record.payment_method,
 		// Mock: halaman simulasi di worker sendiri. SumoPod: hosted page provider.
 		// Pakasir API mode: tanpa hosted page.
-		payment_url: record.payment_url ?? (isMock ? `${origin}/p/${record.id}` : undefined),
+		payment_url: record.payment_url ?? `${origin}/p/${record.id}`,
 		expires_at: record.expires_at,
 		created_at: record.created_at,
 		paid_at: record.paid_at,
@@ -148,7 +157,11 @@ function toResponse(record: PaymentRecord, origin: string): CreatePaymentRespons
 async function createPayment(req: Request, env: WorkerEnv): Promise<Response> {
 	const body = (await req.json().catch(() => null)) as CreatePaymentRequest | null;
 	if (!body || !body.order_id || typeof body.amount !== "number" || body.amount <= 0) {
-		logger.debug("create payment validation failed", { hasBody: !!body, hasOrderId: !!body?.order_id, amount: body?.amount });
+		logger.debug("create payment validation failed", {
+			hasBody: !!body,
+			hasOrderId: !!body?.order_id,
+			amount: body?.amount,
+		});
 		return json(
 			{ success: false, message: "order_id dan amount (number > 0) wajib diisi" },
 			400,
@@ -167,7 +180,10 @@ async function createPayment(req: Request, env: WorkerEnv): Promise<Response> {
 	if (!allowPrivateCallback && isPrivateHost(new URL(body.callback_url).hostname)) {
 		logger.warn("create payment blocked private callback", { callback_url: body.callback_url });
 		return json(
-			{ success: false, message: "callback_url menuju host pribadi (localhost/private) tidak diizinkan" },
+			{
+				success: false,
+				message: "callback_url menuju host pribadi (localhost/private) tidak diizinkan",
+			},
 			400,
 			corsHeaders(env),
 		);
@@ -184,7 +200,10 @@ async function createPayment(req: Request, env: WorkerEnv): Promise<Response> {
 	// Idempotent: payment pending atas order yang sama → kembalikan existing.
 	const existing = await getPaymentByOrder(env, body.order_id);
 	if (existing && existing.status === "pending") {
-		logger.warn("create payment idempotent hit", { order_id: body.order_id, payment_id: existing.id });
+		logger.warn("create payment idempotent hit", {
+			order_id: body.order_id,
+			payment_id: existing.id,
+		});
 		const origin = getOrigin(req);
 		return json(
 			{ success: true, message: "Payment pending sudah ada", data: toResponse(existing, origin) },
@@ -211,7 +230,10 @@ async function createPayment(req: Request, env: WorkerEnv): Promise<Response> {
 		logger.error("provider create failed", { provider: provider.id, error: e });
 	}
 	if (!record) {
-		logger.error("provider create returned null", { provider: provider.id, order_id: body.order_id });
+		logger.error("provider create returned null", {
+			provider: provider.id,
+			order_id: body.order_id,
+		});
 		return json(
 			{
 				success: false,
@@ -224,7 +246,13 @@ async function createPayment(req: Request, env: WorkerEnv): Promise<Response> {
 
 	await putPayment(env, record);
 	await indexPaymentByExpiry(env, record);
-	logger.info("payment intent created", { payment_id: record.id, order_id: record.order_id, provider: record.provider, amount: record.amount, expires_at: record.expires_at });
+	logger.info("payment intent created", {
+		payment_id: record.id,
+		order_id: record.order_id,
+		provider: record.provider,
+		amount: record.amount,
+		expires_at: record.expires_at,
+	});
 
 	const origin = getOrigin(req);
 	return json(
@@ -261,7 +289,11 @@ async function getPaymentHandler(req: Request, env: WorkerEnv, id: string): Prom
 		}
 	}
 
-	logger.debug("payment retrieved", { payment_id: id, order_id: payment.order_id, status: payment.status });
+	logger.debug("payment retrieved", {
+		payment_id: id,
+		order_id: payment.order_id,
+		status: payment.status,
+	});
 	const origin = getOrigin(req);
 	return json({ success: true, data: publicPayment(payment, origin) }, 200, corsHeaders(env));
 }
@@ -281,7 +313,11 @@ async function payOrFail(
 
 	// Aksi sandbox: hanya untuk payment mock (simulasi dev). Provider produksi ditolak.
 	if (payment.provider !== "mock") {
-		logger.warn("sandbox action blocked non-mock provider", { payment_id: id, provider: payment.provider, action });
+		logger.warn("sandbox action blocked non-mock provider", {
+			payment_id: id,
+			provider: payment.provider,
+			action,
+		});
 		return json(
 			{ success: false, message: "Aksi sandbox hanya berlaku untuk provider mock" },
 			403,
@@ -295,7 +331,11 @@ async function payOrFail(
 
 	const nowSec = Math.floor(Date.now() / 1000);
 	if (payment.status !== "pending") {
-		logger.info("sandbox action skipped already processed", { payment_id: id, status: payment.status, action });
+		logger.info("sandbox action skipped already processed", {
+			payment_id: id,
+			status: payment.status,
+			action,
+		});
 		return json(
 			{
 				success: true,
@@ -402,7 +442,11 @@ async function simulatePayment(
 
 	await putPayment(env, updated);
 	await deliverNow(env, updated, ctx);
-	logger.info("payment simulated", { payment_id: id, status: updated.status, provider: updated.provider });
+	logger.info("payment simulated", {
+		payment_id: id,
+		status: updated.status,
+		provider: updated.provider,
+	});
 
 	return json(
 		{
@@ -443,17 +487,27 @@ async function providerWebhook(
 		return json({ success: true, received: true, verified: false }, 200); // ack, jangan retry
 	}
 
-	logger.debug("provider webhook verified", { provider: providerId, order_id: result.order_id, status: result.status });
+	logger.debug("provider webhook verified", {
+		provider: providerId,
+		order_id: result.order_id,
+		status: result.status,
+	});
 
 	const payment = await getPaymentByOrder(env, result.order_id);
 	if (!payment) {
-		logger.warn("provider webhook unknown order", { provider: providerId, order_id: result.order_id });
+		logger.warn("provider webhook unknown order", {
+			provider: providerId,
+			order_id: result.order_id,
+		});
 		return json({ success: true, received: true, verified: true, message: "order unknown" }, 200);
 	}
 
 	// Idempotent: jangan menimpa status final.
 	if (payment.status !== "pending") {
-		logger.debug("provider webhook deduplicated", { payment_id: payment.id, status: payment.status });
+		logger.debug("provider webhook deduplicated", {
+			payment_id: payment.id,
+			status: payment.status,
+		});
 		return json({ success: true, received: true, deduplicated: true }, 200);
 	}
 
@@ -475,7 +529,13 @@ async function providerWebhook(
 
 	await putPayment(env, payment);
 	if (payment.status !== "pending") {
-		logger.info("provider webhook status changed", { payment_id: payment.id, order_id: payment.order_id, prevStatus, nextStatus: payment.status, provider: providerId });
+		logger.info("provider webhook status changed", {
+			payment_id: payment.id,
+			order_id: payment.order_id,
+			prevStatus,
+			nextStatus: payment.status,
+			provider: providerId,
+		});
 		await deliverNow(env, payment, ctx);
 	}
 
@@ -554,7 +614,12 @@ async function cronHandler(env: WorkerEnv): Promise<Response> {
 	let expired = 0;
 	let reconciled = 0;
 
-	logger.info("cron started", { scannedBuckets: allBuckets.length, primaryBuckets: primaryBuckets.length, safetyBuckets: safetyBuckets.length, nowSec });
+	logger.info("cron started", {
+		scannedBuckets: allBuckets.length,
+		primaryBuckets: primaryBuckets.length,
+		safetyBuckets: safetyBuckets.length,
+		nowSec,
+	});
 
 	for (const paymentId of bucketHooks) {
 		const payment = await getPayment(env, paymentId);
