@@ -5,9 +5,8 @@ const PAYMENT_BY_ORDER = (orderId: string) => `order:${orderId}`;
 const WEBHOOK_QUEUE_KEY = (id: string) => `webhook:${id}`;
 const EXPIRY_BUCKET_KEY = (hourBucket: number, id: string) => `expiry:${hourBucket}:${id}`;
 
-const PAYMENT_TTL_SECONDS = 60 * 60 * 24 * 30; // 30 days
+const PAYMENT_TTL_SECONDS = 60 * 60 * 24 * 7; // 7 days
 const WEBHOOK_QUEUE_TTL_SECONDS = 60 * 60 * 24 * 7; // 7 days
-const LOCK_TTL_SECONDS = 5; // 5 seconds for atomic operation lock
 
 export function newId(prefix: string): string {
 	const rand = crypto.getRandomValues(new Uint8Array(8));
@@ -21,21 +20,6 @@ export function generateVirtualAccount(): string {
 	let digits = "";
 	for (const b of rand) digits += (b % 10).toString();
 	return `880${digits.slice(0, 13)}`;
-}
-
-const LOCK_KEY = (id: string) => `lock:payment:${id}`;
-
-export async function acquireLock(env: WorkerEnv, id: string): Promise<boolean> {
-	try {
-		await env.PAYMENTS.put(LOCK_KEY(id), "1");
-		return true;
-	} catch {
-		return false;
-	}
-}
-
-export async function releaseLock(env: WorkerEnv, id: string): Promise<void> {
-	await env.PAYMENTS.delete(LOCK_KEY(id));
 }
 
 export async function getPayment(env: WorkerEnv, id: string): Promise<PaymentRecord | null> {
@@ -80,6 +64,11 @@ export async function indexPaymentByExpiry(env: WorkerEnv, record: PaymentRecord
 	const hourBucket = Math.floor(record.expires_at / 3600);
 	const options: KVNamespacePutOptions = { expirationTtl: PAYMENT_TTL_SECONDS };
 	await env.PAYMENTS.put(EXPIRY_BUCKET_KEY(hourBucket, record.id), record.id, options);
+}
+
+export async function removeExpiryIndex(env: WorkerEnv, record: PaymentRecord): Promise<void> {
+	const hourBucket = Math.floor(record.expires_at / 3600);
+	await env.PAYMENTS.delete(EXPIRY_BUCKET_KEY(hourBucket, record.id));
 }
 
 export async function getPaymentIdsInExpiryBucket(

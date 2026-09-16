@@ -117,13 +117,28 @@ export async function deliverWebhook(env: WorkerEnv, item: WebhookQueueItem): Pr
 		});
 		const ok = res.status >= 200 && res.status < 300;
 		if (ok) {
-			logger.info("webhook delivered", { id: item.id, payment_id: item.payment_id, event: item.event, status: res.status });
+			logger.info("webhook delivered", {
+				id: item.id,
+				payment_id: item.payment_id,
+				event: item.event,
+				status: res.status,
+			});
 		} else {
-			logger.warn("webhook delivery failed", { id: item.id, payment_id: item.payment_id, event: item.event, status: res.status });
+			logger.warn("webhook delivery failed", {
+				id: item.id,
+				payment_id: item.payment_id,
+				event: item.event,
+				status: res.status,
+			});
 		}
 		return ok;
 	} catch (error) {
-		logger.warn("webhook delivery error", { id: item.id, payment_id: item.payment_id, event: item.event, error });
+		logger.warn("webhook delivery error", {
+			id: item.id,
+			payment_id: item.payment_id,
+			event: item.event,
+			error,
+		});
 		return false;
 	}
 }
@@ -168,17 +183,28 @@ export async function deliverNow(
 	record: PaymentRecord,
 	ctx: ExecutionContext,
 ): Promise<void> {
-	await queueWebhook(env, record);
-	ctx.waitUntil(
-		(async () => {
-			const queued = await listWebhookQueue(env);
-			for (const q of queued) {
-				if (q.payment_id === record.id) {
-					const ok = await deliverWebhook(env, q);
-					if (ok) await deleteWebhookQueueItem(env, q.id);
-					else await updateWebhookQueueItem(env, { ...q, attempts: q.attempts + 1 });
-				}
-			}
-		})(),
-	);
+	if (!record.callback_url) return;
+
+	// Build webhook item inline — skip KV queue entirely for immediate delivery
+	const payload = buildPayload(record);
+	const item: WebhookQueueItem = {
+		id: `wh_${record.id}_${payload.event_id}`,
+		payment_id: record.id,
+		order_id: record.order_id,
+		event: payload.event,
+		callback_url: record.callback_url,
+		payload,
+		queued_at: new Date().toISOString(),
+		attempts: 0,
+	};
+
+	// Try immediate delivery; only persist to KV if it fails
+	const ok = await deliverWebhook(env, item);
+	if (!ok) {
+		await enqueueWebhook(env, item);
+		// Also send to Queues for retry if configured
+		if (env.WEBHOOK_DELIVERY_QUEUE) {
+			ctx.waitUntil(env.WEBHOOK_DELIVERY_QUEUE.send(item));
+		}
+	}
 }

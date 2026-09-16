@@ -33,7 +33,13 @@ export async function processWebhookQueue(
 		} catch (error) {
 			const failures = (consecutiveFailures.get(msg.body.id) || 0) + 1;
 			consecutiveFailures.set(msg.body.id, failures);
-			logger.error("queue consumer error", { id: msg.body.id, payment_id: msg.body.payment_id, event: msg.body.event, error, failures });
+			logger.error("queue consumer error", {
+				id: msg.body.id,
+				payment_id: msg.body.payment_id,
+				event: msg.body.event,
+				error,
+				failures,
+			});
 			if (failures >= MAX_CONSECUTIVE_FAILURES) {
 				logger.warn("queue circuit breaker tripped on exception, acking to prevent poison retry", {
 					id: msg.body.id,

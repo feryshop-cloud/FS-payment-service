@@ -12,11 +12,7 @@ export function getRequestId(): string | undefined {
 	return currentRequestId;
 }
 
-function write(
-	level: LogLevel,
-	message: string,
-	meta?: Record<string, unknown>,
-): void {
+function write(level: LogLevel, message: string, meta?: Record<string, unknown>): void {
 	const configured = resolveLogLevel();
 	if (!isLevelEnabled(configured, level)) return;
 

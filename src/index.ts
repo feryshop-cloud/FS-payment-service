@@ -8,12 +8,11 @@ import type {
 import {
 	getPayment,
 	getPaymentByOrder,
-	acquireLock,
 	indexPaymentByExpiry,
 	listPayments,
 	putPayment,
-	releaseLock,
 	getPaymentIdsInExpiryBucket,
+	removeExpiryIndex,
 } from "./storage";
 import { deliverNow, deliverWebhook, queueWebhook } from "./webhook";
 import { processDeadLetterQueue, processWebhookQueue } from "./queues";
@@ -276,17 +275,12 @@ async function getPaymentHandler(req: Request, env: WorkerEnv, id: string): Prom
 	// Lazy expire: saat dipoll, jika sudah lewat masa berlaku, tandai expired + kirim webhook.
 	const nowSec = Math.floor(Date.now() / 1000);
 	if (payment.status === "pending" && payment.expires_at < nowSec) {
-		const locked = await acquireLock(env, payment.id);
-		if (!locked) {
-			logger.debug("payment lazy expire skipped: locked by another request", { payment_id: id });
-		} else {
-			logger.info("payment lazy expired", { payment_id: id, order_id: payment.order_id });
-			payment.status = "expired";
-			payment.failure_reason = "Waktu pembayaran habis";
-			await putPayment(env, payment);
-			await queueWebhook(env, payment);
-			await releaseLock(env, payment.id);
-		}
+		logger.info("payment lazy expired", { payment_id: id, order_id: payment.order_id });
+		payment.status = "expired";
+		payment.failure_reason = "Waktu pembayaran habis";
+		await putPayment(env, payment);
+		await queueWebhook(env, payment);
+		await removeExpiryIndex(env, payment);
 	}
 
 	logger.debug("payment retrieved", {
@@ -373,6 +367,7 @@ async function payOrFail(
 
 	await putPayment(env, payment);
 	await deliverNow(env, payment, ctx);
+	await removeExpiryIndex(env, payment);
 	logger.info("sandbox action completed", { payment_id: id, action, status: payment.status });
 
 	const message =
@@ -442,6 +437,7 @@ async function simulatePayment(
 
 	await putPayment(env, updated);
 	await deliverNow(env, updated, ctx);
+	await removeExpiryIndex(env, updated);
 	logger.info("payment simulated", {
 		payment_id: id,
 		status: updated.status,
@@ -536,6 +532,7 @@ async function providerWebhook(
 			nextStatus: payment.status,
 			provider: providerId,
 		});
+		await removeExpiryIndex(env, payment);
 		await deliverNow(env, payment, ctx);
 	}
 
@@ -631,6 +628,7 @@ async function cronHandler(env: WorkerEnv): Promise<Response> {
 			payment.failure_reason = "Waktu pembayaran habis";
 			await putPayment(env, payment);
 			await queueWebhook(env, payment);
+			await removeExpiryIndex(env, payment);
 			expired++;
 			continue;
 		}
@@ -644,6 +642,7 @@ async function cronHandler(env: WorkerEnv): Promise<Response> {
 					if (current && current.status === "paid") {
 						await putPayment(env, current);
 						await queueWebhook(env, current);
+						await removeExpiryIndex(env, current);
 						reconciled++;
 					}
 				} catch (e) {

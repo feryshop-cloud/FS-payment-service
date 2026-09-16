@@ -638,22 +638,34 @@ describe("hardening: SSRF / admin token / CORS / webhook secret", () => {
 		const { adminTokenOk } = await import("../src/index");
 		const envT = { SANDBOX_ADMIN_TOKEN: "rahasia-admin" } as WorkerEnv;
 		expect(
-			adminTokenOk(envT, new Request("https://x.com/admin", { headers: { "X-Payment-Admin-Token": "rahasia-admin" } })),
+			adminTokenOk(
+				envT,
+				new Request("https://x.com/admin", {
+					headers: { "X-Payment-Admin-Token": "rahasia-admin" },
+				}),
+			),
 		).toBe(true);
-		expect(adminTokenOk(envT, new Request("https://x.com/admin", { headers: { "X-Payment-Admin-Token": "salah" } }))).toBe(
-			false,
-		);
+		expect(
+			adminTokenOk(
+				envT,
+				new Request("https://x.com/admin", { headers: { "X-Payment-Admin-Token": "salah" } }),
+			),
+		).toBe(false);
 		expect(adminTokenOk(envT, new Request("https://x.com/admin"))).toBe(false);
 		expect(adminTokenOk({} as WorkerEnv, new Request("https://x.com/admin"))).toBe(true);
 	});
 
 	it("corsHeaders: echo origin yang diizinkan, bukan join list", async () => {
 		const { corsHeaders } = await import("../src/index");
-		const envC = { ALLOWED_ORIGINS: "https://app.example.com, https://admin.example.com" } as WorkerEnv;
+		const envC = {
+			ALLOWED_ORIGINS: "https://app.example.com, https://admin.example.com",
+		} as WorkerEnv;
 		expect(corsHeaders(envC, "https://app.example.com")["Access-Control-Allow-Origin"]).toBe(
 			"https://app.example.com",
 		);
-		expect(corsHeaders(envC, "https://evil.example.com")["Access-Control-Allow-Origin"]).toBeUndefined();
+		expect(
+			corsHeaders(envC, "https://evil.example.com")["Access-Control-Allow-Origin"],
+		).toBeUndefined();
 		expect(corsHeaders(envC, "")["Access-Control-Allow-Origin"]).toBeUndefined();
 		expect(corsHeaders({} as WorkerEnv, "https://x.com")["Access-Control-Allow-Origin"]).toBe("*");
 	});
